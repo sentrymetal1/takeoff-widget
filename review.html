@@ -85,7 +85,7 @@
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
-  const VERSION = "v0.7 · 2026-06-02";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.8 · 2026-06-02";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21", IMPORT_FORM:"CSV_Import_Tool", IMPORT_REPORT:"All_CSV_Import_Tool",
@@ -319,7 +319,8 @@
       stop();
       render(); // rebuilds the page (re-enables the buttons)
       window.scrollTo({top:0,behavior:"smooth"});
-      setBusy("✓ Revised in "+fmt()+" — package updated (cost $"+(data.cost_usd!=null?data.cost_usd:"?")+")","ok"); clearBusy(5000);
+      const what = (data.notes && String(data.notes).trim()) ? esc(data.notes) : "package updated";
+      setBusy("✓ "+what+" &nbsp;·&nbsp; "+fmt()+", $"+(data.cost_usd!=null?data.cost_usd:"?"),"ok"); clearBusy(9000);
     }catch(e){
       stop(); reenable();
       setBusy("⚠ Network error: "+esc(e.message),"err"); clearBusy(8000);
