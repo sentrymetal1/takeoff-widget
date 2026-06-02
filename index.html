@@ -13,6 +13,9 @@
     * { box-sizing: border-box; }
     body { font-family: 'Segoe UI', system-ui, sans-serif; margin:0; padding:24px;
            color:#222; background:#f7f8fa; }
+    .appbar { max-width:560px; margin:0 auto 14px; display:flex; align-items:center; gap:10px; }
+    .appbar .brand { font-weight:800; font-size:16px; color:var(--blue); letter-spacing:.2px; }
+    .appbar .page { font-size:13px; color:#667; border-left:1px solid #e3e6ea; padding-left:10px; }
     .card { max-width:560px; margin:0 auto; background:#fff; border:1px solid #e3e6ea;
             border-radius:10px; padding:24px; }
     h1 { font-size:18px; margin:0 0 4px; }
@@ -57,6 +60,7 @@
   </style>
 </head>
 <body>
+  <div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off</span></div>
   <div class="card">
     <h1>AI Material Take-off</h1>
     <p class="sub">Upload the project drawings + Division-05 spec (PDF — you can select several:
@@ -87,7 +91,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "takeoff-widget v0.3 (2026-06-01) — Zoho write (step 3a)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.4 (2026-06-02)";
     // Railway base URL (the material-compass-nesting-app backend that hosts /api/takeoff).
     const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
     // ~32 MB Anthropic request cap; warn the user before they waste a click.
@@ -290,7 +294,7 @@
           '<div id="sendMsg" style="margin-top:10px;font-size:12px;color:#667">' +
             (canAutoSubmit
               ? 'Sends the BOM into your staging review under this project — then approve it there.'
-              : 'Upload the BOM CSV to the CSV Import Tool under this project to review &amp; import.') +
+              : 'Upload the BOM CSV under this project to review &amp; import.') +
           '</div>' +
           (data.notes ? '<div class="notes">' + data.notes.replace(/</g, "&lt;") + '</div>' : '') +
           '</div>';

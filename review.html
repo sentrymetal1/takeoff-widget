@@ -21,6 +21,11 @@
   *{box-sizing:border-box;}
   body{font-family:'Segoe UI',system-ui,sans-serif;margin:0;padding:24px;background:#eef1f5;color:var(--ink);}
   .wrap{max-width:780px;margin:0 auto;}
+  .appbar{max-width:780px;margin:0 auto 14px;display:flex;align-items:center;gap:10px;padding:2px;}
+  .appbar .brand{font-weight:800;font-size:16px;color:var(--blue);letter-spacing:.2px;}
+  .appbar .page{font-size:13px;color:var(--mut);border-left:1px solid var(--line);padding-left:10px;}
+  .applybtn{font-size:11px;color:#fff;background:var(--blue);border:0;border-radius:5px;padding:2px 9px;cursor:pointer;margin-left:4px;}
+  .applybtn:hover{opacity:.9;}
   .card{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);margin-bottom:14px;overflow:hidden;}
   .card h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);margin:0;padding:13px 18px;border-bottom:1px solid var(--line);background:#fafbfc;}
   .card h2 .lt{text-transform:none;letter-spacing:0;font-weight:400;color:var(--mut);}
@@ -67,10 +72,12 @@
 </style>
 </head>
 <body>
+<div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off · Project Review</span></div>
 <div class="wrap" id="wrap"><div class="card"><div class="body">Loading take-off…</div></div></div>
 
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
+  const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
   const Z = {
     APP:"type-formsheet-2-18-21", IMPORT_FORM:"CSV_Import_Tool", IMPORT_REPORT:"All_CSV_Import_Tool",
     REVIEW_PAGE:"https://customer.materialcompassportal.com/#Page:BOM_Staging_Review_Page",
@@ -101,6 +108,7 @@
   const splitFt=(n)=>{const r=Number(n)||0;const ft=Math.max(0,Math.floor(r));return ft+"'"+Math.round((r-ft)*12)+'"';};
 
   let DECISIONS = [];   // working copy with .sel
+  let CONFLICTS = [];   // for the per-conflict Apply buttons
 
   function render(){
     const R = loadResult();
@@ -114,6 +122,7 @@
     const sw = s.scope_of_work||{}, t=s.totals||{}, conf=s.confidence||{};
     const fab = rows.filter(r=>(Number(r.quantity)||0)>0);
     const gaps = arr(s.gaps), conflicts=arr(s.conflicts), comp=arr(s.compliance);
+    CONFLICTS = conflicts;
     const overall = conf.overall!=null?conf.overall:0.7;
 
     const streams = [
@@ -161,9 +170,9 @@
           gaps.map(g=>'<li>'+esc(g.item)+(g.where?' <span class="src">'+esc(g.where)+'</span>':'')+
           (g.suggested_action?'<br><span class="src">→ '+esc(g.suggested_action)+'</span>':'')+'</li>').join("")+'</ul></details>':'<div></div>')+
         (conflicts.length?'<details open><summary>⚡ Conflicts ('+conflicts.length+')</summary><ul>'+
-          conflicts.map(c=>'<li><b>'+esc(c.topic)+'</b>'+
+          conflicts.map((c,i)=>'<li><b>'+esc(c.topic)+'</b>'+
           (c.drawing_says?' — drawing: '+esc(c.drawing_says):'')+(c.spec_says?' · spec: '+esc(c.spec_says):'')+
-          (c.recommendation?'<br><span class="src">→ '+esc(c.recommendation)+'</span>':'')+'</li>').join("")+'</ul></details>':'<div></div>')+
+          (c.recommendation?'<br><span class="src">→ '+esc(c.recommendation)+'</span> <button class="applybtn" onclick="applyConflict('+i+')">Apply</button>':'')+'</li>').join("")+'</ul></details>':'<div></div>')+
         '</div></div>':'')+
 
       // compliance
@@ -179,16 +188,16 @@
       '</div></div>'+
 
       // tell-the-AI (3c)
-      '<div class="card"><h2>💬 Tell the AI to revise <span class="lt">(build 3c)</span></h2><div class="body">'+
-        '<div class="ai"><input id="aiInput" placeholder=\'e.g. "drop the davit cranes, add 4 bollards @ 6ft"\' />'+
-        '<button class="btn ghost" onclick="mockRevise()">Revise</button></div>'+
+      '<div class="card"><h2>💬 Tell the AI to revise</h2><div class="body">'+
+        '<div class="ai"><input id="aiInput" placeholder=\'e.g. "galvanize all exterior angles per spec, drop the davit cranes, add 4 bollards @ 6ft"\' />'+
+        '<button class="btn ghost" id="reviseBtn" onclick="doRevise()">Revise</button></div>'+
         '<div id="aiEcho" style="font-size:12px;color:var(--mut);margin-top:8px;"></div></div></div>'+
 
       // submit bar
       '<div class="bar"><div class="left" id="barLeft"></div>'+
         '<button class="btn go" id="approve" onclick="approve()">Approve &amp; Submit Project →</button></div>'+
       '<div class="commit" id="commit"></div>'+
-      '<div class="foot">'+(window.TAKEOFF_RESULT||sessionStorageHas()?'live take-off':'SAMPLE data')+' · review.html · build 3b</div>';
+      '<div class="foot">Material Compass · AI Take-off · '+(window.TAKEOFF_RESULT||sessionStorageHas()?'live':'sample data')+'</div>';
 
     renderDecisions();
   }
@@ -217,11 +226,33 @@
   }
   function pick(id,v){ const d=DECISIONS.find(x=>x.id===id); if(d){ d.sel=v; renderDecisions(); } }
 
-  function mockRevise(){
+  function doRevise(){
     const t=document.getElementById("aiInput").value.trim();
-    document.getElementById("aiEcho").innerHTML = t
-      ? '↻ <i>3c:</i> would re-run Claude with the current package + your instruction ("'+esc(t)+'") and redraw this page with the revised scope, BOM, and decisions.'
-      : 'Type an instruction first.';
+    if(!t){ document.getElementById("aiEcho").textContent="Type an instruction first."; return; }
+    revise(t);
+  }
+  // Per-conflict one-click: apply the AI's recommendation for conflict i.
+  function applyConflict(i){
+    const c=CONFLICTS[i]; if(!c) return;
+    revise('Resolve the conflict on "'+(c.topic||"")+'": '+(c.recommendation||"use the specification")+
+      '. Update the affected BOM rows accordingly and remove this conflict from the list.');
+  }
+  // The 3c revise loop — send current package + instruction, re-render with the revised package.
+  async function revise(instruction){
+    const cur=loadResult();
+    const btn=document.getElementById("reviseBtn"); if(btn) btn.disabled=true;
+    const echo=document.getElementById("aiEcho"); if(echo) echo.innerHTML='<span class="spin"></span>Revising… (~30–60s)';
+    try{
+      const r=await fetch(RAILWAY_URL+"/api/takeoff/revise",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({project_id:params.project_id,manufacturer_id:params.manufacturer_id,
+          instruction:instruction,model:"sonnet",current:{rows:cur.rows,synopsis:cur.synopsis}})});
+      const data=await r.json();
+      if(!r.ok||data.ok===false){ if(echo) echo.innerHTML='<span style="color:var(--red)">Revise failed: '+esc(data.error||("HTTP "+r.status))+'</span>'; if(btn) btn.disabled=false; return; }
+      const updated=Object.assign({},cur,{rows:data.rows,synopsis:data.synopsis,import_csv:data.import_csv,verify_csv:data.verify_csv});
+      window.TAKEOFF_RESULT=updated; try{sessionStorage.setItem("takeoff_result",JSON.stringify(updated));}catch(e){}
+      render(); // rebuild the whole page from the revised package
+      const e2=document.getElementById("aiEcho"); if(e2) e2.innerHTML='✓ Revised (cost $'+(data.cost_usd!=null?data.cost_usd:"?")+'). Review the updated package above.';
+    }catch(e){ if(echo) echo.innerHTML='<span style="color:var(--red)">Network error: '+esc(e.message)+'</span>'; if(btn) btn.disabled=false; }
   }
 
   // ---- 3a Zoho write (BOM → staging) -----------------------------------------
