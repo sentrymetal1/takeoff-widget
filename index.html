@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Material Take-off</title>
+
+  <!-- Zoho Creator widget SDK — verified from match-hub-widget (do not change). -->
+  <script src="https://js.zohostatic.com/creator/widgets/version/1.0/widgetsdk-min.js"></script>
+
+  <style>
+    :root { --blue:#5F94CE; }
+    * { box-sizing: border-box; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; margin:0; padding:24px;
+           color:#222; background:#f7f8fa; }
+    .card { max-width:560px; margin:0 auto; background:#fff; border:1px solid #e3e6ea;
+            border-radius:10px; padding:24px; }
+    h1 { font-size:18px; margin:0 0 4px; }
+    .sub { color:#667; font-size:13px; margin:0 0 20px; }
+    .drop { border:2px dashed #c4ccd6; border-radius:8px; padding:28px; text-align:center;
+            cursor:pointer; transition:.15s; }
+    .drop:hover, .drop.over { border-color:var(--blue); background:#f0f6fc; }
+    .drop input { display:none; }
+    .files { margin-top:12px; font-size:13px; color:#334; text-align:left; }
+    .files div { padding:2px 0; }
+    .files .big { color:#b45309; }
+    label.model { display:block; margin:18px 0 6px; font-size:12px; color:#556; }
+    select { width:100%; padding:8px; border:1px solid #cdd3da; border-radius:6px; }
+    button.go { margin-top:18px; width:100%; padding:12px; border:0; border-radius:6px;
+                background:var(--blue); color:#fff; font-size:15px; font-weight:600;
+                cursor:pointer; }
+    button.go:disabled { opacity:.5; cursor:not-allowed; }
+    .status { margin-top:18px; font-size:14px; }
+    .spin { display:inline-block; width:16px; height:16px; border:2px solid #cdd3da;
+            border-top-color:var(--blue); border-radius:50%; animation:s 0.8s linear infinite;
+            vertical-align:-3px; margin-right:8px; }
+    @keyframes s { to { transform:rotate(360deg); } }
+    .result { margin-top:18px; padding:14px; border-radius:8px; background:#f0f6fc;
+              border:1px solid #cfe0f2; font-size:14px; }
+    .result b.big { font-size:16px; }
+    .warn { background:#fff7ed; border-color:#fcd9a8; }
+    .err  { background:#fdeeee; border-color:#f3c2c2; }
+    .pill { display:inline-block; margin:8px 8px 0 0; padding:4px 10px; border-radius:20px;
+            background:#fff; border:1px solid #cfe0f2; font-size:12px; }
+    .dl { display:inline-block; margin:12px 8px 0 0; padding:10px 16px; background:var(--blue);
+          color:#fff; text-decoration:none; border-radius:6px; font-weight:600; cursor:pointer;
+          border:0; font-size:13px; }
+    .dl.alt { background:#fff; color:var(--blue); border:1px solid var(--blue); }
+    .notes { margin-top:10px; padding:10px; background:#fafbfc; border:1px solid #eceff2;
+             border-radius:6px; font-size:12px; color:#445; white-space:pre-wrap; max-height:180px;
+             overflow:auto; }
+    .foot { text-align:center; color:#aab; font-size:11px; margin-top:18px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>AI Material Take-off</h1>
+    <p class="sub">Upload the project drawings + Division-05 spec (PDF — you can select several:
+       S sheets, A sheets, and the Metals spec). Claude reads the members and builds an
+       importable BOM. Keep the combined size under ~32 MB.</p>
+
+    <label class="drop" id="drop">
+      <strong>Click to choose PDFs</strong><br />or drag them here
+      <input type="file" id="file" accept="application/pdf" multiple />
+      <div class="files" id="fileList"></div>
+    </label>
+
+    <label class="model">Model</label>
+    <select id="model">
+      <option value="haiku">Haiku — cheapest, try first</option>
+      <option value="sonnet" selected>Sonnet — balanced (recommended)</option>
+      <option value="opus">Opus — most accurate, priciest</option>
+    </select>
+
+    <button class="go" id="go" disabled>Run take-off</button>
+
+    <div class="status" id="status"></div>
+    <div id="resultBox"></div>
+
+    <div class="foot" id="foot"></div>
+  </div>
+
+  <script>
+    // ---- CONFIG ----------------------------------------------------------
+    const BUILD_TAG = "takeoff-widget v0.3 (2026-06-01) — Zoho write (step 3a)";
+    // WIRE: your Railway base URL (same proxy your other widgets call):
+    const RAILWAY_URL = "https://YOUR-RAILWAY-APP.up.railway.app";
+    // ~32 MB Anthropic request cap; warn the user before they waste a click.
+    const MAX_MB = 32;
+
+    // ---- ZOHO WRITE (step 3a) — CONFIRM every link name in the form builder ----
+    // When the Zoho SDK is present the widget writes the BOM CSV straight into a
+    // CSV Import Tool record (no manual upload). Flow: addRecord(empty) → uploadFile
+    // → updateRecord(Run_Import=true), which fires the On-Edit import workflow with
+    // the file actually attached. See the Deluge trigger in INTEGRATION/SYNOPSIS docs.
+    const AUTO_SUBMIT = true;            // set false to force the download path
+    const Z = {
+      APP:           "type-formsheet-2-18-21",   // app link name (canonical — known good)
+      IMPORT_FORM:   "CSV_Import_Tool",          // CONFIRM: the form LINK name (addRecord target)
+      IMPORT_REPORT: "All_CSV_Import_Tool",      // CONFIRM: a report holding those records (upload/update target)
+      REVIEW_PAGE:   "https://customer.materialcompassportal.com/#Page:BOM_Staging_Review_Page", // CONFIRM
+      F: {
+        project: "Project_ID",          // CONFIRM
+        mfg:     "MFG_Client_Form",      // CONFIRM
+        mode:    "BOM_Import_Mode",      // CONFIRM (or drop from the data{} below)
+        file:    "BOM_CSV_File",         // CONFIRM (the file-upload field)
+        run:     "Run_Import",           // NEW field to add — the On-Edit trigger keys off this
+      },
+    };
+    // ----------------------------------------------------------------------
+    console.log(BUILD_TAG);
+    document.getElementById("foot").textContent = BUILD_TAG;
+
+    // Resolve params (project_id + manufacturer_id) from the page URL.
+    function getParams() {
+      const q = new URLSearchParams(window.location.search);
+      return { project_id: q.get("project_id"), manufacturer_id: q.get("manufacturer_id") };
+    }
+    let params = getParams();
+    // If the Zoho SDK is present, prefer its query params (more reliable in-iframe).
+    if (window.ZOHO && ZOHO.CREATOR && ZOHO.CREATOR.init) {
+      ZOHO.CREATOR.init().then(() => {
+        try {
+          const p = ZOHO.CREATOR.UTIL.getQueryParams();
+          params = { project_id: p.project_id || params.project_id,
+                     manufacturer_id: p.manufacturer_id || params.manufacturer_id };
+        } catch (e) { /* keep URL params */ }
+      });
+    }
+
+    const fileEl = document.getElementById("file");
+    const drop = document.getElementById("drop");
+    const go = document.getElementById("go");
+    const statusEl = document.getElementById("status");
+    const resultBox = document.getElementById("resultBox");
+    let docs = [];        // [{ name, b64, mb }]
+
+    drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+    drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+    drop.addEventListener("drop", (e) => {
+      e.preventDefault(); drop.classList.remove("over");
+      if (e.dataTransfer.files.length) { fileEl.files = e.dataTransfer.files; loadFiles(); }
+    });
+    fileEl.addEventListener("change", loadFiles);
+
+    function readAsB64(f) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error("read failed: " + f.name));
+        reader.onload = () => resolve(String(reader.result).split(",")[1]); // strip data: prefix
+        reader.readAsDataURL(f);
+      });
+    }
+
+    async function loadFiles() {
+      const list = [...fileEl.files].filter((f) => f.type === "application/pdf");
+      if (!list.length) { statusEl.textContent = "Please choose PDF files."; return; }
+      docs = [];
+      for (const f of list) {
+        docs.push({ name: f.name, b64: await readAsB64(f), mb: f.size / 1024 / 1024 });
+      }
+      const totalMb = docs.reduce((s, d) => s + d.mb, 0);
+      const over = totalMb > MAX_MB;
+      document.getElementById("fileList").innerHTML =
+        docs.map((d) => "<div>• " + d.name + "  (" + d.mb.toFixed(1) + " MB)</div>").join("") +
+        '<div class="' + (over ? "big" : "") + '"><b>Total: ' + totalMb.toFixed(1) + " MB" +
+        (over ? "  — over " + MAX_MB + " MB, trim before running" : "") + "</b></div>";
+      go.disabled = over;
+      statusEl.textContent = "";
+    }
+
+    // CSV download helper (the manual-upload fallback when the SDK isn't present).
+    function download(name, text) {
+      const blob = new Blob([text], { type: "text/csv" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    }
+
+    // STEP 3a — write the BOM CSV straight into a CSV Import Tool record so it lands
+    // in staging with NO manual upload. Three calls (the SDK can't attach a file at
+    // create time): create the record → attach the CSV → flip Run_Import so the
+    // On-Edit import workflow runs WITH the file present.
+    async function submitToZoho(importCsv, proj, mfg) {
+      if (!(window.ZOHO && ZOHO.CREATOR && ZOHO.CREATOR.API)) throw new Error("Zoho SDK not loaded");
+      // 1. create the import record (no file yet — the guarded submission workflow no-ops)
+      const add = await ZOHO.CREATOR.API.addRecord({
+        appName: Z.APP, formName: Z.IMPORT_FORM,
+        data: { [Z.F.project]: proj, [Z.F.mfg]: mfg, [Z.F.mode]: "AI Take-off" },
+      });
+      const recId = (add && (add.data?.ID || add.data?.data?.ID || add.ID)) || null;
+      if (!recId) throw new Error("addRecord returned no record id: " + JSON.stringify(add));
+      // 2. attach the CSV to the file-upload field on that record
+      const file = new File([importCsv], "ai-takeoff-" + proj + ".csv", { type: "text/csv" });
+      await ZOHO.CREATOR.API.uploadFile({
+        appName: Z.APP, reportName: Z.IMPORT_REPORT, id: recId, fieldName: Z.F.file, file,
+      });
+      // 3. flip the flag → fires the On-Edit import workflow with the file present.
+      //    (Checkbox fields reject JS booleans — send the string "true"/"Yes" your field expects.)
+      await ZOHO.CREATOR.API.updateRecord({
+        appName: Z.APP, reportName: Z.IMPORT_REPORT, id: recId, data: { [Z.F.run]: "true" },
+      });
+      return recId;
+    }
+
+    go.addEventListener("click", async () => {
+      if (!docs.length) return;
+      if (!params.project_id) {
+        resultBox.innerHTML = '<div class="result err">No project_id on the page URL. ' +
+          'The take-off button must pass project_id (and manufacturer_id).</div>';
+        return;
+      }
+      go.disabled = true; resultBox.innerHTML = "";
+      const t0 = Date.now();
+      const timer = setInterval(() => {
+        statusEl.innerHTML = '<span class="spin"></span>Reading ' + docs.length +
+          ' document' + (docs.length > 1 ? "s" : "") + '… ' +
+          Math.round((Date.now() - t0) / 1000) + 's';
+      }, 250);
+
+      try {
+        const r = await fetch(RAILWAY_URL + "/api/takeoff", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            project_id: params.project_id,
+            manufacturer_id: params.manufacturer_id,
+            pdfs: docs.map((d) => d.b64),
+            model: document.getElementById("model").value,
+          }),
+        });
+        const data = await r.json();
+        clearInterval(timer); statusEl.textContent = "";
+
+        // Out of credits → 402. Show a Buy-credits button instead of a generic error.
+        if (r.status === 402 || data.error === "out_of_credits") {
+          resultBox.innerHTML =
+            '<div class="result warn"><b>You’re out of AI take-offs.</b><br>' +
+            'Buy more credits to keep going.' +
+            (data.buy_url
+              ? '<br><a class="dl" href="' + data.buy_url + '" target="_top">Buy take-off credits →</a>'
+              : '') + '</div>';
+          go.disabled = false;
+          return;
+        }
+        if (!r.ok || data.ok === false) {
+          resultBox.innerHTML = '<div class="result err"><b>Take-off failed.</b><br>' +
+            (data.error || ("HTTP " + r.status)) + '</div>';
+          go.disabled = false;
+          return;
+        }
+
+        // ---- success: summary + actions --------------------------------------
+        const cls = data.low_confidence ? "warn" : "";
+        const left = (data.free_left != null || data.credits_left != null)
+          ? ((data.free_left || 0) + (data.credits_left || 0)) : null;
+        const proj = params.project_id;
+
+        // Premium tier → hand off to the full project approval page (review.html),
+        // which renders the synopsis (scope / decisions / gaps / BOM) and commits.
+        if (data.synopsis) {
+          try { sessionStorage.setItem("takeoff_result", JSON.stringify(data)); } catch (e) {}
+          location.href = "review.html?project_id=" + encodeURIComponent(proj) +
+            "&manufacturer_id=" + encodeURIComponent(params.manufacturer_id || "");
+          return;
+        }
+
+        const canAutoSubmit = AUTO_SUBMIT && window.ZOHO && ZOHO.CREATOR && ZOHO.CREATOR.API;
+        resultBox.innerHTML = '<div class="result ' + cls + '">' +
+          '<b class="big">' + data.count + ' BOM rows ready.</b>' +
+          '<div>' +
+            '<span class="pill">' + data.count + ' quantified</span>' +
+            (data.gap_count ? '<span class="pill">' + data.gap_count + ' gaps to verify</span>' : '') +
+            (data.low_confidence ? '<span class="pill">' + data.low_confidence + ' low-confidence</span>' : '') +
+            '<span class="pill">$' + (data.cost_usd ?? "?") + '</span>' +
+            (left != null ? '<span class="pill">' + left + ' take-offs left</span>' : '') +
+          '</div>' +
+          (canAutoSubmit
+            ? '<button class="dl" id="send">Send to BOM staging →</button>' +
+              '<button class="dl alt" id="dlImport">↓ Download CSV instead</button>'
+            : '<button class="dl" id="dlImport">↓ Download BOM CSV</button>') +
+          (data.gap_count ? '<button class="dl alt" id="dlVerify">↓ Verify list</button>' : '') +
+          '<div id="sendMsg" style="margin-top:10px;font-size:12px;color:#667">' +
+            (canAutoSubmit
+              ? 'Sends the BOM into your staging review under this project — then approve it there.'
+              : 'Upload the BOM CSV to the CSV Import Tool under this project to review &amp; import.') +
+          '</div>' +
+          (data.notes ? '<div class="notes">' + data.notes.replace(/</g, "&lt;") + '</div>' : '') +
+          '</div>';
+
+        document.getElementById("dlImport").addEventListener("click", () =>
+          download("takeoff-import-" + proj + ".csv", data.import_csv || ""));
+        const dv = document.getElementById("dlVerify");
+        if (dv) dv.addEventListener("click", () =>
+          download("takeoff-verify-" + proj + ".csv", data.verify_csv || ""));
+
+        const sendBtn = document.getElementById("send");
+        if (sendBtn) sendBtn.addEventListener("click", async () => {
+          sendBtn.disabled = true;
+          const msg = document.getElementById("sendMsg");
+          msg.innerHTML = '<span class="spin"></span>Sending to staging…';
+          try {
+            await submitToZoho(data.import_csv || "", proj, params.manufacturer_id);
+            msg.innerHTML = '✓ Sent. Opening your staging review…';
+            const url = Z.REVIEW_PAGE + (Z.REVIEW_PAGE.includes("?") ? "&" : "?") + "project_id=" + proj;
+            setTimeout(() => window.open(url, "_top"), 800);
+          } catch (e) {
+            sendBtn.disabled = false;
+            msg.innerHTML = '<span style="color:#b91c1c">Send failed: ' + (e.message || e) + '</span>' +
+              '<br>Use “Download CSV instead” and upload it to the CSV Import Tool.';
+          }
+        });
+
+        go.disabled = false;
+      } catch (e) {
+        clearInterval(timer);
+        statusEl.textContent = "";
+        resultBox.innerHTML = '<div class="result err"><b>Network error.</b><br>' + e.message + '</div>';
+        go.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

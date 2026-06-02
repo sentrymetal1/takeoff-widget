@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI Take-off — Project Review</title>
+<!-- Zoho Creator widget SDK — verified from match-hub-widget (do not change). -->
+<script src="https://js.zohostatic.com/creator/widgets/version/1.0/widgetsdk-min.js"></script>
+<!--
+  LIVE approval page (build 3b). Renders a real take-off result {rows, import_csv, synopsis}.
+  Data source, in order: window.TAKEOFF_RESULT  →  sessionStorage 'takeoff_result'
+  (set by the upload widget)  →  built-in SAMPLE (so it opens standalone for design review).
+  Approve & Submit commits the BOM via submitToZoho (3a); other section-writes are WIRE-stubbed.
+-->
+<style>
+  :root{
+    --blue:#5F94CE; --ink:#1f2a37; --mut:#667; --line:#e3e6ea;
+    --grn:#2e7d32; --grnbg:#e8f5e9; --ylw:#b45309; --ylwbg:#fff7ed;
+    --red:#b91c1c; --redbg:#fdeeee;
+  }
+  *{box-sizing:border-box;}
+  body{font-family:'Segoe UI',system-ui,sans-serif;margin:0;padding:24px;background:#eef1f5;color:var(--ink);}
+  .wrap{max-width:780px;margin:0 auto;}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);margin-bottom:14px;overflow:hidden;}
+  .card h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);margin:0;padding:13px 18px;border-bottom:1px solid var(--line);background:#fafbfc;}
+  .card h2 .lt{text-transform:none;letter-spacing:0;font-weight:400;color:var(--mut);}
+  .card .body{padding:16px 18px;}
+  .hero{background:linear-gradient(180deg,#fff,#f7f9fc);} .hero .body{padding:20px 18px;}
+  .hero h1{margin:0 0 4px;font-size:20px;} .hero .type{color:var(--mut);font-size:13px;margin-bottom:14px;}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;}
+  .chip{font-size:12px;background:#fff;border:1px solid var(--line);border-radius:20px;padding:5px 11px;color:#334;}
+  .conf{float:right;font-weight:700;font-size:13px;padding:5px 12px;border-radius:20px;}
+  .c-hi{background:var(--grnbg);color:var(--grn);} .c-md{background:var(--ylwbg);color:var(--ylw);} .c-lo{background:var(--redbg);color:var(--red);}
+  .stream{display:flex;gap:12px;padding:9px 0;border-bottom:1px dashed #eef1f4;} .stream:last-child{border-bottom:0;}
+  .stream .tag{flex:0 0 92px;font-weight:600;font-size:12px;}
+  .tag.fab{color:var(--blue);} .tag.buy{color:var(--ylw);} .tag.oth{color:var(--mut);} .tag.snd{color:var(--grn);}
+  .stream .items{font-size:13px;color:#2b3340;}
+  .dec{padding:12px 0;border-bottom:1px dashed #eef1f4;} .dec:last-child{border-bottom:0;}
+  .dec .q{font-size:14px;font-weight:600;margin-bottom:2px;} .dec .why{font-size:12px;color:var(--mut);margin-bottom:8px;}
+  .opts{display:flex;gap:8px;flex-wrap:wrap;}
+  .opt{font-size:13px;border:1px solid var(--line);border-radius:7px;padding:6px 12px;cursor:pointer;background:#fff;user-select:none;transition:.12s;}
+  .opt:hover{border-color:var(--blue);} .opt.sel{background:var(--blue);color:#fff;border-color:var(--blue);}
+  .opt.rec::after{content:" ★";color:#f2c14e;font-size:11px;} .opt.sel.rec::after{color:#fff;}
+  .undec{box-shadow:inset 3px 0 0 var(--ylw);padding-left:10px;border-radius:3px;}
+  .decnote{font-size:12px;color:var(--ylw);margin-top:6px;}
+  .twoup{display:grid;grid-template-columns:1fr 1fr;gap:14px;} @media(max-width:640px){.twoup{grid-template-columns:1fr;}}
+  details{font-size:13px;} details summary{cursor:pointer;font-weight:600;padding:4px 0;}
+  details ul{margin:6px 0 0;padding-left:18px;color:#2b3340;} details li{margin:4px 0;}
+  .src{color:var(--mut);font-size:11px;}
+  .comp{display:flex;gap:10px;align-items:flex-start;font-size:13px;margin-bottom:8px;} .comp .ok{color:var(--grn);font-weight:700;white-space:nowrap;}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  th{text-align:left;color:var(--mut);font-weight:600;font-size:11px;text-transform:uppercase;padding:6px 8px;border-bottom:1px solid var(--line);}
+  td{padding:7px 8px;border-bottom:1px solid #f1f3f5;}
+  tr.lo td{background:var(--redbg);} tr.md td{background:var(--ylwbg);}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;}
+  .d-hi{background:var(--grn);} .d-md{background:var(--ylw);} .d-lo{background:var(--red);}
+  .galv{font-size:10px;background:#eef6ee;color:var(--grn);border-radius:4px;padding:1px 5px;}
+  .pillbtn{font-size:11px;color:var(--blue);border:1px solid #cfe0f2;background:#f3f8fd;border-radius:5px;padding:1px 7px;margin-left:6px;cursor:pointer;}
+  .ai{display:flex;gap:8px;} .ai input{flex:1;padding:10px 12px;border:1px solid #cdd3da;border-radius:8px;font-size:13px;}
+  .btn{border:0;border-radius:8px;padding:10px 16px;font-weight:600;cursor:pointer;font-size:13px;}
+  .btn.ghost{background:#fff;border:1px solid var(--blue);color:var(--blue);} .btn.go{background:var(--blue);color:#fff;} .btn.go:disabled{opacity:.45;cursor:not-allowed;}
+  .bar{position:sticky;bottom:0;background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px;box-shadow:0 -2px 8px rgba(0,0,0,.05);}
+  .bar .left{font-size:13px;color:var(--mut);} .bar .left b{color:var(--ink);}
+  .commit{margin-top:10px;font-size:13px;background:var(--grnbg);border:1px solid #bfe3c4;border-radius:8px;padding:12px 14px;display:none;} .commit ul{margin:8px 0 0;padding-left:18px;}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid #cdd3da;border-top-color:var(--blue);border-radius:50%;animation:s .8s linear infinite;vertical-align:-2px;margin-right:6px;} @keyframes s{to{transform:rotate(360deg);}}
+  .foot{text-align:center;color:#9aa6b2;font-size:11px;margin:6px 0 24px;}
+</style>
+</head>
+<body>
+<div class="wrap" id="wrap"><div class="card"><div class="body">Loading take-off…</div></div></div>
+
+<script>
+  // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
+  const Z = {
+    APP:"type-formsheet-2-18-21", IMPORT_FORM:"CSV_Import_Tool", IMPORT_REPORT:"All_CSV_Import_Tool",
+    REVIEW_PAGE:"https://customer.materialcompassportal.com/#Page:BOM_Staging_Review_Page",
+    F:{project:"Project_ID",mfg:"MFG_Client_Form",mode:"BOM_Import_Mode",file:"BOM_CSV_File",run:"Run_Import"},
+  };
+
+  // ---- params (project_id / manufacturer_id) ---------------------------------
+  function getParams(){ const q=new URLSearchParams(location.search);
+    return { project_id:q.get("project_id"), manufacturer_id:q.get("manufacturer_id") }; }
+  let params = getParams();
+  if (window.ZOHO && ZOHO.CREATOR && ZOHO.CREATOR.init) {
+    ZOHO.CREATOR.init().then(()=>{ try{ const p=ZOHO.CREATOR.UTIL.getQueryParams();
+      params={project_id:p.project_id||params.project_id, manufacturer_id:p.manufacturer_id||params.manufacturer_id};}catch(e){} });
+  }
+
+  // ---- data source -----------------------------------------------------------
+  function loadResult(){
+    if (window.TAKEOFF_RESULT) return window.TAKEOFF_RESULT;
+    try { const s=sessionStorage.getItem("takeoff_result"); if(s) return JSON.parse(s); } catch(e){}
+    return SAMPLE;
+  }
+
+  // ---- helpers ---------------------------------------------------------------
+  const esc = (s)=>String(s==null?"":s).replace(/</g,"&lt;");
+  const arr = (a)=>Array.isArray(a)?a:[];
+  const confClass=(c)=> c>=0.8?"hi":c>=0.5?"md":"lo";
+  const confBadge=(c)=> '<span class="conf c-'+confClass(c)+'">'+Math.round((c||0)*100)+'% confident</span>';
+  const splitFt=(n)=>{const r=Number(n)||0;const ft=Math.max(0,Math.floor(r));return ft+"'"+Math.round((r-ft)*12)+'"';};
+
+  let DECISIONS = [];   // working copy with .sel
+
+  function render(){
+    const R = loadResult();
+    const rows = arr(R.rows);
+    const s = R.synopsis || {};
+    DECISIONS = arr(s.decisions).map(d=>({
+      id:d.id||("d"+Math.random().toString(36).slice(2,6)), item:d.item||"(decision)",
+      where:d.where||"", why:d.why_flagged||"", options:arr(d.options).length?d.options:["Include","Skip"],
+      rec:d.ai_recommendation||"", sel:d.ai_recommendation||null,
+    }));
+    const sw = s.scope_of_work||{}, t=s.totals||{}, conf=s.confidence||{};
+    const fab = rows.filter(r=>(Number(r.quantity)||0)>0);
+    const gaps = arr(s.gaps), conflicts=arr(s.conflicts), comp=arr(s.compliance);
+    const overall = conf.overall!=null?conf.overall:0.7;
+
+    const streams = [
+      ["fab","Fabricate",arr(sw.fabricate)],["buy","Buyout",arr(sw.buyout)],
+      ["oth","By others",arr(sw.by_others)],["snd","Send-out",arr(sw.send_out)],
+    ].filter(x=>x[2].length);
+
+    const bomRows = fab.slice(0,8).map(r=>{
+      const c=Number(r.confidence)||0, cls=confClass(c);
+      return '<tr class="'+(cls==="hi"?"":cls)+'">'+
+        '<td><span class="dot d-'+cls+'"></span>'+c.toFixed(2)+'</td>'+
+        '<td>'+esc(r.form_type)+'</td>'+
+        '<td>'+esc(r.size)+(r.galvanized?' <span class="galv">galv</span>':'')+'</td>'+
+        '<td>'+esc(r.specification)+'</td><td>'+esc(r.quantity)+'</td>'+
+        '<td>'+(r.width_ft?(Number(r.width_ft).toFixed(1)+"'w"):splitFt(r.length_ft))+'</td>'+
+        '<td>'+esc(r.source_sheet)+'</td></tr>';
+    }).join("");
+
+    document.getElementById("wrap").innerHTML =
+      // header
+      '<div class="card hero"><div class="body">'+ confBadge(overall) +
+        '<h1>'+esc(s.project?.name||"AI Take-off")+'</h1>'+
+        '<div class="type">'+esc(s.project?.type||"")+(s.project?.summary?" — "+esc(s.project.summary):"")+'</div>'+
+        '<div class="meta">'+
+          '<span class="chip">📄 '+(arr(s.project?.sheets_read).length||"?")+' sheets/specs</span>'+
+          '<span class="chip">🧱 '+fab.length+' fab rows</span>'+
+          (t.est_weight_lb?'<span class="chip">⚖ ~'+Number(t.est_weight_lb).toLocaleString()+' lb</span>':'')+
+          (R.cost_usd!=null?'<span class="chip">💲 $'+R.cost_usd+'</span>':'')+
+          (gaps.length?'<span class="chip">◷ '+gaps.length+' gaps</span>':'')+
+        '</div></div></div>'+
+
+      // scope
+      (streams.length?'<div class="card"><h2>▸ Scope of Work</h2><div class="body">'+
+        streams.map(([k,lbl,items])=>'<div class="stream"><div class="tag '+k+'">'+lbl+'</div>'+
+          '<div class="items">'+items.map(esc).join(" · ")+
+          (k==="buy"?' <span class="pillbtn" onclick="alert(\'Mock: builds the RFQ / outsource subform from these buyout items.\')">→ build RFQ</span>':'')+
+          '</div></div>').join("")+'</div></div>':'')+
+
+      // decisions
+      (DECISIONS.length?'<div class="card"><h2>⚠ Decisions — your call <span id="decCount" style="color:var(--ylw);font-weight:700;"></span></h2><div class="body" id="decisions"></div></div>':'')+
+
+      // gaps + conflicts
+      ((gaps.length||conflicts.length)?'<div class="card"><h2>◷ Gaps &amp; ⚡ Conflicts</h2><div class="body twoup">'+
+        (gaps.length?'<details open><summary>◷ Gaps to verify ('+gaps.length+')</summary><ul>'+
+          gaps.map(g=>'<li>'+esc(g.item)+(g.where?' <span class="src">'+esc(g.where)+'</span>':'')+
+          (g.suggested_action?'<br><span class="src">→ '+esc(g.suggested_action)+'</span>':'')+'</li>').join("")+'</ul></details>':'<div></div>')+
+        (conflicts.length?'<details open><summary>⚡ Conflicts ('+conflicts.length+')</summary><ul>'+
+          conflicts.map(c=>'<li><b>'+esc(c.topic)+'</b>'+
+          (c.drawing_says?' — drawing: '+esc(c.drawing_says):'')+(c.spec_says?' · spec: '+esc(c.spec_says):'')+
+          (c.recommendation?'<br><span class="src">→ '+esc(c.recommendation)+'</span>':'')+'</li>').join("")+'</ul></details>':'<div></div>')+
+        '</div></div>':'')+
+
+      // compliance
+      (comp.length?'<div class="card"><h2>✓ Compliance &amp; finish</h2><div class="body">'+
+        comp.map(c=>'<div class="comp"><span class="ok">'+esc(c.topic)+'</span><span class="src">'+esc(c.note)+'</span></div>').join("")+
+        '</div></div>':'')+
+
+      // BOM
+      '<div class="card"><h2>▸ Bill of Materials <span class="lt">— '+fab.length+' rows, confidence-colored</span></h2><div class="body" style="padding:0;">'+
+        '<table><thead><tr><th>Conf</th><th>Form</th><th>Material</th><th>Spec</th><th>Qty</th><th>Len</th><th>Sheet</th></tr></thead><tbody>'+
+        (bomRows||'<tr><td colspan="7" style="padding:14px;color:var(--mut)">No quantified rows.</td></tr>')+'</tbody></table>'+
+        (fab.length>8?'<div style="padding:10px 18px;font-size:12px;color:var(--mut)">…and '+(fab.length-8)+' more rows. <span class="pillbtn" onclick="alert(\'Mock: opens the full editable BOM grid.\')">expand &amp; edit</span></div>':'')+
+      '</div></div>'+
+
+      // tell-the-AI (3c)
+      '<div class="card"><h2>💬 Tell the AI to revise <span class="lt">(build 3c)</span></h2><div class="body">'+
+        '<div class="ai"><input id="aiInput" placeholder=\'e.g. "drop the davit cranes, add 4 bollards @ 6ft"\' />'+
+        '<button class="btn ghost" onclick="mockRevise()">Revise</button></div>'+
+        '<div id="aiEcho" style="font-size:12px;color:var(--mut);margin-top:8px;"></div></div></div>'+
+
+      // submit bar
+      '<div class="bar"><div class="left" id="barLeft"></div>'+
+        '<button class="btn go" id="approve" onclick="approve()">Approve &amp; Submit Project →</button></div>'+
+      '<div class="commit" id="commit"></div>'+
+      '<div class="foot">'+(window.TAKEOFF_RESULT||sessionStorageHas()?'live take-off':'SAMPLE data')+' · review.html · build 3b</div>';
+
+    renderDecisions();
+  }
+
+  function sessionStorageHas(){ try{return !!sessionStorage.getItem("takeoff_result");}catch(e){return false;} }
+
+  function renderDecisions(){
+    const box=document.getElementById("decisions");
+    if(box){
+      box.innerHTML = DECISIONS.map(d=>{
+        const undec=d.sel==null;
+        return '<div class="dec '+(undec?'undec':'')+'">'+
+          '<div class="q">'+esc(d.item)+'</div>'+
+          '<div class="why">'+esc(d.why)+(d.where?' <span class="src">· '+esc(d.where)+'</span>':'')+'</div>'+
+          '<div class="opts">'+d.options.map(o=>'<span class="opt '+(d.sel===o?'sel ':'')+(d.rec===o?'rec':'')+'" onclick="pick(\''+d.id+'\',\''+esc(o).replace(/\x27/g,"")+'\')">'+esc(o)+'</span>').join("")+'</div>'+
+          (undec?'<div class="decnote">★ needs your decision.</div>':'')+'</div>';
+      }).join("");
+    }
+    const made=DECISIONS.filter(d=>d.sel!=null).length, left=DECISIONS.length-made;
+    const dc=document.getElementById("decCount"); if(dc) dc.textContent = DECISIONS.length?(left?'('+left+' need a decision)':'(all set ✓)'):'';
+    const bl=document.getElementById("barLeft");
+    if(bl) bl.innerHTML = DECISIONS.length
+      ? '<b>'+made+'</b> of <b>'+DECISIONS.length+'</b> decisions · '+(left?'<span style="color:var(--ylw)">'+left+' undecided</span>':'<span style="color:var(--grn)">ready ✓</span>')
+      : '<span style="color:var(--grn)">ready ✓</span>';
+    const ap=document.getElementById("approve"); if(ap) ap.disabled = left>0;
+  }
+  function pick(id,v){ const d=DECISIONS.find(x=>x.id===id); if(d){ d.sel=v; renderDecisions(); } }
+
+  function mockRevise(){
+    const t=document.getElementById("aiInput").value.trim();
+    document.getElementById("aiEcho").innerHTML = t
+      ? '↻ <i>3c:</i> would re-run Claude with the current package + your instruction ("'+esc(t)+'") and redraw this page with the revised scope, BOM, and decisions.'
+      : 'Type an instruction first.';
+  }
+
+  // ---- 3a Zoho write (BOM → staging) -----------------------------------------
+  async function submitToZoho(importCsv, proj, mfg){
+    if(!(window.ZOHO && ZOHO.CREATOR && ZOHO.CREATOR.API)) throw new Error("Zoho SDK not loaded");
+    const add=await ZOHO.CREATOR.API.addRecord({appName:Z.APP,formName:Z.IMPORT_FORM,
+      data:{[Z.F.project]:proj,[Z.F.mfg]:mfg,[Z.F.mode]:"AI Take-off"}});
+    const recId=(add&&(add.data?.ID||add.data?.data?.ID||add.ID))||null;
+    if(!recId) throw new Error("addRecord returned no id");
+    const file=new File([importCsv],"ai-takeoff-"+proj+".csv",{type:"text/csv"});
+    await ZOHO.CREATOR.API.uploadFile({appName:Z.APP,reportName:Z.IMPORT_REPORT,id:recId,fieldName:Z.F.file,file});
+    await ZOHO.CREATOR.API.updateRecord({appName:Z.APP,reportName:Z.IMPORT_REPORT,id:recId,data:{[Z.F.run]:"true"}});
+    return recId;
+  }
+
+  async function approve(){
+    const R=loadResult();
+    const ap=document.getElementById("approve"); ap.disabled=true;
+    const c=document.getElementById("commit"); c.style.display="block";
+    const picks=DECISIONS.map(d=>'• '+esc(d.item)+'  →  <b>'+esc(d.sel)+'</b>').join("<br>")||"(none)";
+    const hasSDK = window.ZOHO && ZOHO.CREATOR && ZOHO.CREATOR.API;
+
+    if(hasSDK && R.import_csv && params.project_id){
+      c.innerHTML='<span class="spin"></span>Committing BOM to staging…';
+      try{
+        await submitToZoho(R.import_csv, params.project_id, params.manufacturer_id);
+        c.innerHTML='<b>✓ BOM sent to staging.</b> Opening the review…'+commitList(picks);
+        const url=Z.REVIEW_PAGE+(Z.REVIEW_PAGE.includes("?")?"&":"?")+"project_id="+params.project_id;
+        setTimeout(()=>window.open(url,"_top"),900);
+      }catch(e){ ap.disabled=false; c.innerHTML='<b style="color:var(--red)">Commit failed:</b> '+esc(e.message); }
+    } else {
+      // standalone / SAMPLE — show what WOULD commit
+      c.innerHTML='<b>✓ Approved — this is what would commit:</b>'+commitList(picks)+
+        '<div class="src" style="margin-top:8px">(No Zoho SDK / no project_id — design preview, nothing written.)</div>';
+    }
+    c.scrollIntoView({behavior:"smooth"});
+  }
+  function commitList(picks){
+    return '<ul>'+
+      '<li><b>BOM</b> → CSV Import Tool → staging review</li>'+
+      '<li><b>Buyout</b> → outsource / RFQ subform <span class="src">(WIRE)</span></li>'+
+      '<li><b>Scope of Work</b> → project record <span class="src">(WIRE: Save_Scope_Of_Work)</span></li>'+
+      '<li><b>Gaps + conflicts</b> → project alerts / verify list <span class="src">(WIRE)</span></li>'+
+      '<li><b>Totals + confidence</b> → Takeoff_Log <span class="src">(WIRE)</span></li>'+
+      '</ul><div style="margin-top:8px">Decisions recorded:<br>'+picks+'</div>';
+  }
+
+  // ---- SAMPLE (Alden) — used when no live result is present -------------------
+  const SAMPLE = {
+    cost_usd:0.91,
+    import_csv:"(sample — real result carries the generated CSV here)",
+    rows:[
+      {form_type:"Beam - W",size:"W12 x 26",specification:"A992",quantity:8,length_ft:24,source_sheet:"S-201",confidence:0.95},
+      {form_type:"Beam - W",size:"W8 x 24",specification:"A992",quantity:12,length_ft:6.33,source_sheet:"S-204",confidence:0.92,galvanized:true},
+      {form_type:"Angle",size:"L4 x 4 x 1/4",specification:"A36",quantity:22,length_ft:3,source_sheet:"S-205",confidence:0.90},
+      {form_type:"Channel - MC",size:"MC8 x 8.5",specification:"A36",quantity:4,length_ft:12,source_sheet:"S-203",confidence:0.62},
+      {form_type:"Plate",size:'1/2"',specification:"A36",quantity:6,length_ft:1,width_ft:1,source_sheet:"S-501",confidence:0.55},
+      {form_type:"Beam - W",size:"W16 x 40",specification:"A992",quantity:5,length_ft:28,source_sheet:"S-201",confidence:0.88},
+      {form_type:"Pipe",size:'6" SCH 80 (XS)',specification:"A53 Gr B",quantity:0,length_ft:0,source_sheet:"C-101",confidence:0.30,note:"GAP — bollard count"},
+    ],
+    synopsis:{
+      project:{name:"Alden Intermediate School",type:"K-12 / institutional",
+        sheets_read:["S-101","S-201","S-204","A-220","Spec 05 12 00","Spec 05 50 00"],
+        summary:"Structural steel + misc metals for a 2-story addition"},
+      scope_of_work:{
+        fabricate:["Primary W framing","Lintels (12)","Stair stringers & pans","Embed plates"],
+        buyout:["Bar grating + frames","Pipe railings"], by_others:["Precast plank","CIP concrete"],
+        send_out:["Hot-dip galv: 12 exterior lintels / shelf angles"]},
+      decisions:[
+        {id:"d1",item:"4 davit cranes on S-301 — in fab scope?",where:"S-301",
+          why_flagged:"Could be our fabrication or a vendor-supplied unit.",options:["Include","Skip"],ai_recommendation:"Skip"},
+        {id:"d2",item:"Masonry ledger angle — continuous or clips?",where:"S-204 / Spec 05 50 00",
+          why_flagged:"Drawing shows continuous; spec permits clip angles.",options:["Continuous","Clips"],ai_recommendation:"Continuous"},
+        {id:"d3",item:"Stainless hardware noted on A-220 — our scope?",where:"A-220",
+          why_flagged:"Hardware callout with no supplier assigned.",options:["Yes","No"],ai_recommendation:""},
+      ],
+      gaps:[
+        {item:"Loose lintels — L-schedule not in set",where:"A-601",suggested_action:"Pull arch lintel schedule"},
+        {item:"OH coiling door frames",where:"A-220",suggested_action:"Confirm frame sizes"},
+        {item:"Bollard count + length",where:"C-101",suggested_action:"Confirm from civil"},
+      ],
+      conflicts:[
+        {topic:"Lintel finish",drawing_says:"prime",spec_says:"galvanize (ext)",recommendation:"Galvanize per 05 50 00 §2.3"},
+      ],
+      compliance:[
+        {topic:"BABA / AIS",note:"Domestic content required — Spec 00 73 00 / 7 CFR 1792"},
+        {topic:"Finish",note:"Interior = shop prime · exterior = hot-dip galvanized"},
+      ],
+      totals:{fab_rows:52,est_weight_lb:2140,gap_count:6,low_conf_count:3},
+      confidence:{overall:0.84,scope:0.9,bom:0.82,gaps:0.5},
+    },
+  };
+
+  render();
+</script>
+</body>
+</html>
