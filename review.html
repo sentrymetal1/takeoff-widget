@@ -26,6 +26,12 @@
   .appbar .page{font-size:13px;color:var(--mut);border-left:1px solid var(--line);padding-left:10px;}
   .applybtn{font-size:11px;color:#fff;background:var(--blue);border:0;border-radius:5px;padding:2px 9px;cursor:pointer;margin-left:4px;}
   .applybtn:hover{opacity:.9;}
+  .applybtn:disabled{opacity:.5;cursor:default;}
+  .busy{position:fixed;top:0;left:0;right:0;z-index:50;background:var(--blue);color:#fff;text-align:center;
+        padding:11px;font-size:14px;font-weight:600;display:none;box-shadow:0 2px 10px rgba(0,0,0,.18);}
+  .busy.show{display:block;}
+  .busy.err{background:var(--red);}
+  .busy.ok{background:var(--grn);}
   .card{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);margin-bottom:14px;overflow:hidden;}
   .card h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);margin:0;padding:13px 18px;border-bottom:1px solid var(--line);background:#fafbfc;}
   .card h2 .lt{text-transform:none;letter-spacing:0;font-weight:400;color:var(--mut);}
@@ -72,6 +78,7 @@
 </style>
 </head>
 <body>
+<div id="busy" class="busy"></div>
 <div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off · Project Review</span></div>
 <div class="wrap" id="wrap"><div class="card"><div class="body">Loading take-off…</div></div></div>
 
@@ -230,33 +237,74 @@
   }
   function pick(id,v){ const d=DECISIONS.find(x=>x.id===id); if(d){ d.sel=v; renderDecisions(); } }
 
+  function setBusy(msg, cls){ const b=document.getElementById("busy"); if(!b) return; b.className="busy show"+(cls?(" "+cls):""); b.innerHTML=msg; }
+  function clearBusy(delay){ setTimeout(function(){ const b=document.getElementById("busy"); if(b) b.className="busy"; }, delay||0); }
+
   function doRevise(){
     const t=document.getElementById("aiInput").value.trim();
-    if(!t){ document.getElementById("aiEcho").textContent="Type an instruction first."; return; }
-    revise(t);
+    if(!t){ const e=document.getElementById("aiEcho"); if(e) e.textContent="Type an instruction first."; return; }
+    revise(t, {});
   }
-  // Per-conflict one-click: apply the AI's recommendation for conflict i.
+  // Per-conflict one-click: apply the AI's recommendation, and remove that conflict deterministically.
   function applyConflict(i){
     const c=CONFLICTS[i]; if(!c) return;
     revise('Resolve the conflict on "'+(c.topic||"")+'": '+(c.recommendation||"use the specification")+
-      '. Update the affected BOM rows accordingly and remove this conflict from the list.');
+      '. Update the affected BOM rows accordingly. Do not change anything else.', { removeConflict:i });
   }
-  // The 3c revise loop — send current package + instruction, re-render with the revised package.
-  async function revise(instruction){
+
+  // A synopsis section is kept from the revise ONLY if it came back populated; otherwise the original is
+  // preserved (the model sometimes omits unchanged sections on a small edit — never let them vanish).
+  function _has(v){ return v && (Array.isArray(v) ? v.length>0 : (typeof v==="object" ? Object.values(v).some(function(x){return Array.isArray(x)?x.length:x;}) : true)); }
+  function mergeResult(cur, data, opts){
+    const os=cur.synopsis||{}, rs=data.synopsis||{};
+    let conflicts;
+    if(opts.removeConflict!=null && Array.isArray(os.conflicts)){
+      conflicts = os.conflicts.filter(function(_,i){ return i!==opts.removeConflict; }); // deterministic removal
+    } else {
+      conflicts = (rs.conflicts!==undefined) ? rs.conflicts : (os.conflicts||[]);
+    }
+    const syn={
+      project:       _has(rs.project)?rs.project:os.project,
+      scope_of_work: _has(rs.scope_of_work)?rs.scope_of_work:os.scope_of_work,
+      decisions:     _has(rs.decisions)?rs.decisions:os.decisions,
+      gaps:          _has(rs.gaps)?rs.gaps:os.gaps,
+      conflicts:     conflicts,
+      compliance:    _has(rs.compliance)?rs.compliance:os.compliance,
+      totals:        _has(rs.totals)?rs.totals:os.totals,
+      confidence:    _has(rs.confidence)?rs.confidence:os.confidence,
+    };
+    return Object.assign({},cur,{rows:data.rows,synopsis:syn,import_csv:data.import_csv,verify_csv:data.verify_csv});
+  }
+
+  // The 3c revise loop — global status bar + button locking so it's obvious something is happening.
+  async function revise(instruction, opts){
+    opts = opts || {};
+    if(window.__revising) return;
+    window.__revising = true;
+    document.querySelectorAll(".applybtn,#reviseBtn").forEach(function(b){ b.disabled=true; });
+    setBusy("&#10227; Revising your take-off… (~30–60s — please wait)");
     const cur=loadResult();
-    const btn=document.getElementById("reviseBtn"); if(btn) btn.disabled=true;
-    const echo=document.getElementById("aiEcho"); if(echo) echo.innerHTML='<span class="spin"></span>Revising… (~30–60s)';
     try{
       const r=await fetch(RAILWAY_URL+"/api/takeoff/revise",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({project_id:params.project_id,manufacturer_id:params.manufacturer_id,
           instruction:instruction,model:"sonnet",current:{rows:cur.rows,synopsis:cur.synopsis}})});
       const data=await r.json();
-      if(!r.ok||data.ok===false){ if(echo) echo.innerHTML='<span style="color:var(--red)">Revise failed: '+esc(data.error||("HTTP "+r.status))+'</span>'; if(btn) btn.disabled=false; return; }
-      const updated=Object.assign({},cur,{rows:data.rows,synopsis:data.synopsis,import_csv:data.import_csv,verify_csv:data.verify_csv});
-      window.TAKEOFF_RESULT=updated; try{sessionStorage.setItem("takeoff_result",JSON.stringify(updated));}catch(e){}
-      render(); // rebuild the whole page from the revised package
-      const e2=document.getElementById("aiEcho"); if(e2) e2.innerHTML='✓ Revised (cost $'+(data.cost_usd!=null?data.cost_usd:"?")+'). Review the updated package above.';
-    }catch(e){ if(echo) echo.innerHTML='<span style="color:var(--red)">Network error: '+esc(e.message)+'</span>'; if(btn) btn.disabled=false; }
+      if(!r.ok||data.ok===false){
+        window.__revising=false;
+        document.querySelectorAll(".applybtn,#reviseBtn").forEach(function(b){ b.disabled=false; });
+        setBusy("⚠ Revise failed: "+esc(data.error||("HTTP "+r.status)),"err"); clearBusy(6000); return;
+      }
+      const merged=mergeResult(cur, data, opts);
+      window.TAKEOFF_RESULT=merged; try{sessionStorage.setItem("takeoff_result",JSON.stringify(merged));}catch(e){}
+      window.__revising=false;
+      render(); // rebuilds the page (re-enables the buttons)
+      window.scrollTo({top:0,behavior:"smooth"});
+      setBusy("✓ Revised — package updated (cost $"+(data.cost_usd!=null?data.cost_usd:"?")+")","ok"); clearBusy(4500);
+    }catch(e){
+      window.__revising=false;
+      document.querySelectorAll(".applybtn,#reviseBtn").forEach(function(b){ b.disabled=false; });
+      setBusy("⚠ Network error: "+esc(e.message),"err"); clearBusy(6000);
+    }
   }
 
   // ---- 3a Zoho write (BOM → staging) -----------------------------------------
