@@ -67,6 +67,13 @@
        S sheets, A sheets, and the Metals spec). Claude reads the members and builds an
        importable BOM. Keep the combined size under ~32 MB.</p>
 
+    <div id="resume" style="display:none;margin:0 0 16px;padding:11px 13px;background:#f0f6fc;
+         border:1px solid #cfe0f2;border-radius:8px;font-size:13px;color:#334;">
+      💾 You have a saved take-off for this project.
+      <a id="resumeLink" href="#" style="color:var(--blue);font-weight:600;text-decoration:none;">Open it →</a>
+      <span style="color:#8893a0;">or run a new one below.</span>
+    </div>
+
     <label class="drop" id="drop">
       <strong>Click to choose PDFs</strong>
       <span class="hint">or drag them here</span>
@@ -91,7 +98,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.4 (2026-06-02)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.6 (2026-06-02)";
     // Railway base URL (the material-compass-nesting-app backend that hosts /api/takeoff).
     const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
     // ~32 MB Anthropic request cap; warn the user before they waste a click.
@@ -126,6 +133,17 @@
       return { project_id: q.get("project_id"), manufacturer_id: q.get("manufacturer_id") };
     }
     let params = getParams();
+    // If a saved take-off exists for this project, offer a way back to it (no re-run, no re-cost).
+    function showResume() {
+      try {
+        if (!params.project_id) return;
+        if (!localStorage.getItem("mc_takeoff_" + params.project_id)) return;
+        const el = document.getElementById("resume"), lk = document.getElementById("resumeLink");
+        if (lk) lk.href = "review.html?project_id=" + encodeURIComponent(params.project_id) +
+          "&manufacturer_id=" + encodeURIComponent(params.manufacturer_id || "");
+        if (el) el.style.display = "block";
+      } catch (e) {}
+    }
     // If the Zoho SDK is present, prefer its query params (more reliable in-iframe).
     if (window.ZOHO && ZOHO.CREATOR && ZOHO.CREATOR.init) {
       ZOHO.CREATOR.init().then(() => {
@@ -134,8 +152,10 @@
           params = { project_id: p.project_id || params.project_id,
                      manufacturer_id: p.manufacturer_id || params.manufacturer_id };
         } catch (e) { /* keep URL params */ }
+        showResume();
       });
     }
+    showResume();
 
     const fileEl = document.getElementById("file");
     const drop = document.getElementById("drop");
@@ -271,6 +291,7 @@
         // which renders the synopsis (scope / decisions / gaps / BOM) and commits.
         if (data.synopsis) {
           try { sessionStorage.setItem("takeoff_result", JSON.stringify(data)); } catch (e) {}
+          try { if (proj) localStorage.setItem("mc_takeoff_" + proj, JSON.stringify(data)); } catch (e) {}
           location.href = "review.html?project_id=" + encodeURIComponent(proj) +
             "&manufacturer_id=" + encodeURIComponent(params.manufacturer_id || "");
           return;

@@ -85,6 +85,8 @@
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
+  const VERSION = "v0.6 · 2026-06-02";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21", IMPORT_FORM:"CSV_Import_Tool", IMPORT_REPORT:"All_CSV_Import_Tool",
     REVIEW_PAGE:"https://customer.materialcompassportal.com/#Page:BOM_Staging_Review_Page",
@@ -100,12 +102,22 @@
       params={project_id:p.project_id||params.project_id, manufacturer_id:p.manufacturer_id||params.manufacturer_id};}catch(e){} });
   }
 
-  // ---- data source -----------------------------------------------------------
+  // ---- data source + persistence ---------------------------------------------
+  // Results are saved to localStorage keyed by project, so closing & reopening this
+  // page (same browser) restores the last take-off instead of losing a paid run.
+  function lsKey(){ return params.project_id ? ("mc_takeoff_"+params.project_id) : null; }
   function loadResult(){
     if (window.TAKEOFF_RESULT) return window.TAKEOFF_RESULT;
     try { const s=sessionStorage.getItem("takeoff_result"); if(s) return JSON.parse(s); } catch(e){}
+    try { const k=lsKey(); if(k){ const s=localStorage.getItem(k); if(s) return JSON.parse(s); } } catch(e){}
     return SAMPLE;
   }
+  function saveResult(result){
+    window.TAKEOFF_RESULT = result;
+    try { sessionStorage.setItem("takeoff_result", JSON.stringify(result)); } catch(e){}
+    try { const k=lsKey(); if(k) localStorage.setItem(k, JSON.stringify(result)); } catch(e){}
+  }
+  function haveLive(){ try{ if(window.TAKEOFF_RESULT) return true; if(sessionStorage.getItem("takeoff_result")) return true; const k=lsKey(); if(k && localStorage.getItem(k)) return true; }catch(e){} return false; }
 
   // ---- helpers ---------------------------------------------------------------
   const esc = (s)=>String(s==null?"":s).replace(/</g,"&lt;");
@@ -148,7 +160,7 @@
         '<td>'+esc(r.source_sheet)+'</td></tr>';
     }).join("");
 
-    const isLive = !!(window.TAKEOFF_RESULT || sessionStorageHas());
+    const isLive = haveLive();
     document.getElementById("wrap").innerHTML =
       (isLive ? '' :
         '<div class="card" style="background:#fff7ed;border-color:#fcd9a8;"><div class="body" style="padding:12px 16px;color:#b45309;font-size:13px;">'+
@@ -208,12 +220,11 @@
       '<div class="bar"><div class="left" id="barLeft"></div>'+
         '<button class="btn go" id="approve" onclick="approve()">Approve &amp; Submit Project →</button></div>'+
       '<div class="commit" id="commit"></div>'+
-      '<div class="foot">Material Compass · AI Take-off · '+(window.TAKEOFF_RESULT||sessionStorageHas()?'live':'sample data')+'</div>';
+      '<div class="foot">Material Compass · AI Take-off · '+(haveLive()?'live':'sample data')+' · '+VERSION+'</div>';
 
     renderDecisions();
   }
 
-  function sessionStorageHas(){ try{return !!sessionStorage.getItem("takeoff_result");}catch(e){return false;} }
 
   function renderDecisions(){
     const box=document.getElementById("decisions");
@@ -295,7 +306,7 @@
         setBusy("⚠ Revise failed: "+esc(data.error||("HTTP "+r.status)),"err"); clearBusy(6000); return;
       }
       const merged=mergeResult(cur, data, opts);
-      window.TAKEOFF_RESULT=merged; try{sessionStorage.setItem("takeoff_result",JSON.stringify(merged));}catch(e){}
+      saveResult(merged);
       window.__revising=false;
       render(); // rebuilds the page (re-enables the buttons)
       window.scrollTo({top:0,behavior:"smooth"});
@@ -398,6 +409,9 @@
     },
   };
 
+  // Arriving from the uploader the result is in sessionStorage — mirror it to localStorage
+  // (keyed by project) so closing & reopening this page restores it instead of losing the run.
+  (function(){ try{ const s=sessionStorage.getItem("takeoff_result"); const k=lsKey(); if(s&&k) localStorage.setItem(k,s); }catch(e){} })();
   render();
 </script>
 </body>
