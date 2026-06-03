@@ -85,7 +85,7 @@
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
-  const VERSION = "v0.10 · 2026-06-02";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.11 · 2026-06-02";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21", IMPORT_FORM:"CSV_Import_Tool", IMPORT_REPORT:"All_CSV_Import_Tool",
@@ -246,7 +246,10 @@
 
       // submit bar
       '<div class="bar"><div class="left" id="barLeft"></div>'+
-        '<button class="btn go" id="approve" onclick="approve()">Approve &amp; Submit Project →</button></div>'+
+        '<div style="display:flex;gap:8px;align-items:center">'+
+          '<button class="btn ghost" onclick="downloadBom()">↓ BOM CSV</button>'+
+          '<button class="btn go" id="approve" onclick="approve()">Approve &amp; Submit Project →</button>'+
+        '</div></div>'+
       '<div class="commit" id="commit"></div>'+
       '<div class="foot">Material Compass · AI Take-off · '+(haveLive()?'live':'sample data')+' · '+VERSION+'</div>';
 
@@ -298,6 +301,10 @@
   function recomputeCsv(R){ try{ R.import_csv=buildImportCsvJS(R.rows); }catch(e){} }
   function editQty(idx, val){ const R=loadResult(); if(!R.rows||!R.rows[idx]) return; R.rows[idx].quantity=Math.max(0,Number(val)||0); recomputeCsv(R); saveResult(R); render(); }
   function removeRow(idx){ const R=loadResult(); if(!R.rows||!R.rows[idx]) return; R.rows.splice(idx,1); recomputeCsv(R); saveResult(R); render(); }
+
+  // Download the (resolved/edited) BOM CSV — use it in the existing BOM import flow today.
+  function download(name,text){ const b=new Blob([text||""],{type:"text/csv"}); const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){URL.revokeObjectURL(a.href);},2000); }
+  function downloadBom(){ const R=loadResult(); download("takeoff-bom-"+(params.project_id||"project")+".csv", R.import_csv); }
 
   function setBusy(msg, cls){ const b=document.getElementById("busy"); if(!b) return; b.className="busy show"+(cls?(" "+cls):""); b.innerHTML=msg; }
   function clearBusy(delay){ setTimeout(function(){ const b=document.getElementById("busy"); if(b) b.className="busy"; }, delay||0); }
