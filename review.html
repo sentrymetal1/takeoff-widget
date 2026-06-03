@@ -66,6 +66,9 @@
   .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;}
   .d-hi{background:var(--grn);} .d-md{background:var(--ylw);} .d-lo{background:var(--red);}
   .galv{font-size:10px;background:#eef6ee;color:var(--grn);border-radius:4px;padding:1px 5px;}
+  tr.grp-comp td{background:#eef2f7;color:#1f3a5f;font-weight:700;font-size:13px;padding:9px 12px;border-top:2px solid #cdd8e6;border-bottom:1px solid #d7e0ec;}
+  tr.grp-draw td{background:#f7f9fb;color:#46566b;font-weight:600;font-size:12px;padding:5px 12px 5px 24px;border-bottom:1px solid #eef1f4;}
+  .grp-meta{font-weight:500;color:#8493a4;font-size:11px;margin-left:8px;}
   .pillbtn{font-size:11px;color:var(--blue);border:1px solid #cfe0f2;background:#f3f8fd;border-radius:5px;padding:1px 7px;margin-left:6px;cursor:pointer;}
   .ai{display:flex;gap:8px;} .ai input{flex:1;padding:10px 12px;border:1px solid #cdd3da;border-radius:8px;font-size:13px;}
   .btn{border:0;border-radius:8px;padding:10px 16px;font-weight:600;cursor:pointer;font-size:13px;}
@@ -96,7 +99,7 @@
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
-  const VERSION = "v0.21 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.22 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -206,9 +209,24 @@
     ].filter(x=>x[2].length);
 
     const editable = BOM_EXPANDED;
+    const NC = editable ? 7 : 6;  // table columns (Sheet now lives in the drawing group header)
     const fabIdx=[]; rows.forEach(function(r,idx){ if((Number(r.quantity)||0)>0) fabIdx.push(idx); });
-    const shownIdx = editable ? fabIdx : fabIdx.slice(0,8);
-    const bomRows = shownIdx.map(function(idx){
+
+    // Group fab rows by Component → Drawing (source_sheet), preserving first-seen order.
+    const gKey=function(v){ return (v==null?'':String(v).trim()); };
+    const compOrder=[], compMap={};
+    fabIdx.forEach(function(idx){
+      const r=rows[idx];
+      const cN=gKey(r.component)||'— Unassigned —';
+      const dN=gKey(r.source_sheet)||'— No sheet —';
+      if(!compMap[cN]){ compMap[cN]={dOrder:[],dMap:{}}; compOrder.push(cN); }
+      const g=compMap[cN];
+      if(!g.dMap[dN]){ g.dMap[dN]=[]; g.dOrder.push(dN); }
+      g.dMap[dN].push(idx);
+    });
+    const sumQty=function(ids){ return ids.reduce(function(a,i){ return a+(Number(rows[i].quantity)||0); },0); };
+
+    const memberRow=function(idx){
       const r=rows[idx], c=Number(r.confidence)||0, cls=confClass(c);
       const qtyCell = editable
         ? '<input type="number" min="0" value="'+(Number(r.quantity)||0)+'" style="width:56px;padding:3px 5px;border:1px solid #cdd3da;border-radius:5px;font-size:12px;" onchange="editQty('+idx+',this.value)">'
@@ -219,9 +237,21 @@
         '<td>'+esc(r.size)+(r.galvanized?' <span class="galv">galv</span>':'')+'</td>'+
         '<td>'+esc(r.specification)+'</td><td>'+qtyCell+'</td>'+
         '<td style="white-space:nowrap">'+dimStr(r)+'</td>'+
-        '<td>'+esc(r.source_sheet)+'</td>'+
         (editable?'<td><button class="applybtn" style="background:var(--red);padding:1px 8px" title="Remove row" onclick="removeRow('+idx+')">✕</button></td>':'')+
         '</tr>';
+    };
+    const bomRows = compOrder.map(function(cN){
+      const g=compMap[cN];
+      const cIds=[].concat.apply([], g.dOrder.map(function(d){ return g.dMap[d]; }));
+      let html='<tr class="grp-comp"><td colspan="'+NC+'">▸ '+esc(cN)+
+        ' <span class="grp-meta">'+cIds.length+' item'+(cIds.length===1?'':'s')+' · '+sumQty(cIds)+' qty</span></td></tr>';
+      g.dOrder.forEach(function(dN){
+        const ids=g.dMap[dN];
+        html+='<tr class="grp-draw"><td colspan="'+NC+'">📄 '+esc(dN)+
+          ' <span class="grp-meta">'+ids.length+' item'+(ids.length===1?'':'s')+' · '+sumQty(ids)+' qty</span></td></tr>'+
+          ids.map(memberRow).join("");
+      });
+      return html;
     }).join("");
 
     const isLive = haveLive();
@@ -268,15 +298,13 @@
         '</div></div>':'')+
 
       // BOM
-      '<div class="card"><h2>▸ Bill of Materials <span class="lt">— '+fab.length+' rows, confidence-colored</span></h2><div class="body" style="padding:0;">'+
-        '<table><thead><tr><th>Conf</th><th>Form</th><th>Material</th><th>Spec</th><th>Qty</th><th>Dimensions</th><th>Sheet</th>'+(editable?'<th></th>':'')+'</tr></thead><tbody>'+
-        (bomRows||'<tr><td colspan="8" style="padding:14px;color:var(--mut)">No quantified rows.</td></tr>')+'</tbody></table>'+
+      '<div class="card"><h2>▸ Bill of Materials <span class="lt">— '+fab.length+' rows, grouped by component → drawing</span></h2><div class="body" style="padding:0;">'+
+        '<table><thead><tr><th>Conf</th><th>Form</th><th>Material</th><th>Spec</th><th>Qty</th><th>Dimensions</th>'+(editable?'<th></th>':'')+'</tr></thead><tbody>'+
+        (bomRows||'<tr><td colspan="'+NC+'" style="padding:14px;color:var(--mut)">No quantified rows.</td></tr>')+'</tbody></table>'+
         ((fab.length>0)?'<div style="padding:10px 18px;font-size:12px;color:var(--mut)">'+
           (editable
-            ? 'Editing all '+fab.length+' rows — change a Qty or remove a row (✕). <span class="pillbtn" onclick="toggleBom()">collapse</span> &nbsp;·&nbsp; form/spec/size are best changed via “Tell the AI” below.'
-            : (fab.length>8
-                ? '…and '+(fab.length-8)+' more rows. <span class="pillbtn" onclick="toggleBom()">expand &amp; edit</span>'
-                : '<span class="pillbtn" onclick="toggleBom()">edit rows</span>'))+
+            ? 'Editing all '+fab.length+' rows — change a Qty or remove a row (✕). <span class="pillbtn" onclick="toggleBom()">done</span> &nbsp;·&nbsp; form/spec/size are best changed via “Tell the AI” below.'
+            : 'Grouped by component (▸), then drawing (📄) — review one sheet at a time. <span class="pillbtn" onclick="toggleBom()">edit rows</span>')+
         '</div>':'')+
       '</div></div>'+
 
@@ -330,7 +358,7 @@
   // ---- BOM expand + inline edit ----------------------------------------------
   function toggleBom(){ BOM_EXPANDED=!BOM_EXPANDED; render(); }
   // Print the full package — expand the BOM first so every row is on the printout.
-  function printAll(){ BOM_EXPANDED=true; render(); setTimeout(function(){ window.print(); }, 200); }
+  function printAll(){ BOM_EXPANDED=false; render(); setTimeout(function(){ window.print(); }, 200); }
 
   // ---- Add more drawings to THIS take-off (additive — merges, doesn't redo) ------------------
   function readB64(f){ return new Promise(function(res,rej){ const r=new FileReader(); r.onerror=function(){rej(new Error("read failed: "+f.name));}; r.onload=function(){ res(String(r.result).split(",")[1]); }; r.readAsDataURL(f); }); }
