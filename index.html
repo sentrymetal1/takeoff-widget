@@ -98,7 +98,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.15 (2026-06-02)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.18 (2026-06-03)";
     // Railway base URL (the material-compass-nesting-app backend that hosts /api/takeoff).
     const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
     // ~32 MB Anthropic request cap; warn the user before they waste a click.
@@ -135,15 +135,22 @@
     }
     let params = getParams();
     // If a saved take-off exists for this project, offer a way back to it (no re-run, no re-cost).
-    function showResume() {
-      try {
-        if (!params.project_id) return;
-        if (!localStorage.getItem("mc_takeoff_" + params.project_id)) return;
-        const el = document.getElementById("resume"), lk = document.getElementById("resumeLink");
-        if (lk) lk.href = "review.html?project_id=" + encodeURIComponent(params.project_id) +
-          "&manufacturer_id=" + encodeURIComponent(params.manufacturer_id || "");
-        if (el) el.style.display = "block";
-      } catch (e) {}
+    async function showResume() {
+      if (!params.project_id) return;
+      let has = false;
+      try { has = !!localStorage.getItem("mc_takeoff_" + params.project_id); } catch (e) {}
+      if (!has) {  // not on this device — check the project's saved take-off in Zoho
+        try {
+          const r = await fetch(RAILWAY_URL + "/api/takeoff/saved/" + encodeURIComponent(params.project_id));
+          const d = await r.json();
+          has = !!(d && d.ok && d.found);
+        } catch (e) {}
+      }
+      if (!has) return;
+      const el = document.getElementById("resume"), lk = document.getElementById("resumeLink");
+      if (lk) lk.href = "review.html?project_id=" + encodeURIComponent(params.project_id) +
+        "&manufacturer_id=" + encodeURIComponent(params.manufacturer_id || "");
+      if (el) el.style.display = "block";
     }
     // If the Zoho SDK is present, prefer its query params (more reliable in-iframe).
     if (window.ZOHO && ZOHO.CREATOR && ZOHO.CREATOR.init) {

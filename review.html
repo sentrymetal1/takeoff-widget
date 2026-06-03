@@ -86,7 +86,7 @@
 </head>
 <body>
 <div id="busy" class="busy"></div>
-<div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off · Project Review</span>
+<div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off · Project Review</span><span id="saveInd" style="font-size:11px;color:var(--mut);margin-left:12px"></span>
   <a id="addBtn" href="#" onclick="document.getElementById('addFile').click();return false;" style="margin-left:auto;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">➕ Add drawings</a>
   <a id="printBtn" href="#" onclick="printAll();return false;" style="margin-left:14px;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">🖨 Print</a>
   <a id="newRun" href="#" style="margin-left:14px;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">↻ New take-off</a></div>
@@ -96,7 +96,7 @@
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
-  const VERSION = "v0.17 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.18 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -131,6 +131,23 @@
     if(result && result.__demo) return;   // never persist demo/sample data (was polluting localStorage)
     try { sessionStorage.setItem("takeoff_result", JSON.stringify(result)); } catch(e){}
     try { const k=lsKey(); if(k) localStorage.setItem(k, JSON.stringify(result)); } catch(e){}
+    scheduleZohoSave();   // also persist to the project record in Zoho (debounced)
+  }
+  // ---- durable save to Zoho (per project), debounced ----
+  let _zohoTimer=null;
+  function setSaveInd(txt,color){ const el=document.getElementById("saveInd"); if(el){ el.textContent=txt; el.style.color=color||"var(--mut)"; } }
+  function scheduleZohoSave(){ if(_zohoTimer) clearTimeout(_zohoTimer); _zohoTimer=setTimeout(doZohoSave, 2500); }
+  async function doZohoSave(){
+    const R=loadResult();
+    if(!R || R.__demo || !params.project_id || !Array.isArray(R.rows) || !R.rows.length) return;
+    setSaveInd("saving…","var(--mut)");
+    const pkg={ rows:R.rows, synopsis:R.synopsis, notes:R.notes, cost_usd:R.cost_usd };
+    try{
+      const r=await fetch(RAILWAY_URL+"/api/takeoff/save",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({project_id:params.project_id, package:pkg})});
+      const d=await r.json();
+      setSaveInd(d.ok?"💾 saved to project":"⚠ save failed", d.ok?"var(--grn)":"var(--red)");
+    }catch(e){ setSaveInd("⚠ save failed","var(--red)"); }
   }
   function haveLive(){ try{ if(window.TAKEOFF_RESULT) return true; if(sessionStorage.getItem("takeoff_result")) return true; const k=lsKey(); if(k && localStorage.getItem(k)) return true; }catch(e){} return false; }
 
@@ -167,7 +184,7 @@
     DECISIONS = arr(s.decisions).map((d,i)=>({
       id:"dec"+i, item:d.item||"(decision)",
       where:d.where||"", why:d.why_flagged||"", options:arr(d.options).length?d.options:["Include","Skip"],
-      rec:d.ai_recommendation||"", sel:d.ai_recommendation||null,
+      rec:d.ai_recommendation||"", sel:(d.selected!=null?d.selected:(d.ai_recommendation||null)),
     }));
     const sw = s.scope_of_work||{}, t=s.totals||{}, conf=s.confidence||{};
     const fab = rows.filter(r=>(Number(r.quantity)||0)>0);
@@ -294,7 +311,13 @@
       : '<span style="color:var(--grn)">ready ✓</span>';
     const ap=document.getElementById("approve"); if(ap) ap.disabled = left>0;
   }
-  function pick(id,v){ const d=DECISIONS.find(x=>x.id===id); if(d){ d.sel=v; renderDecisions(); } }
+  function pick(id,v){
+    const d=DECISIONS.find(function(x){return x.id===id;}); if(!d) return;
+    d.sel=v; renderDecisions();
+    const idx=parseInt(String(id).replace("dec",""),10);
+    const R=loadResult();
+    if(R && R.synopsis && Array.isArray(R.synopsis.decisions) && R.synopsis.decisions[idx]){ R.synopsis.decisions[idx].selected=v; saveResult(R); }
+  }
 
   // ---- BOM expand + inline edit ----------------------------------------------
   function toggleBom(){ BOM_EXPANDED=!BOM_EXPANDED; render(); }
@@ -556,7 +579,23 @@
   (function(){ try{ const s=sessionStorage.getItem("takeoff_result"); const k=lsKey(); if(s&&k) localStorage.setItem(k,s); }catch(e){} })();
   // "New take-off" link → back to the uploader for this project
   (function(){ const lk=document.getElementById("newRun"); if(lk && params.project_id){ lk.href="index.html?project_id="+encodeURIComponent(params.project_id)+"&manufacturer_id="+encodeURIComponent(params.manufacturer_id||""); } })();
-  render();
+  (async function init(){
+    render();                                  // show local/sample immediately
+    if(haveLive()){
+      scheduleZohoSave();                      // persist the freshly-arrived take-off to the project
+    } else if(params.project_id){
+      setSaveInd("loading saved…","var(--mut)");
+      try{
+        const r=await fetch(RAILWAY_URL+"/api/takeoff/saved/"+encodeURIComponent(params.project_id));
+        const d=await r.json();
+        if(d.ok && d.found && d.package && Array.isArray(d.package.rows) && d.package.rows.length){
+          const R=d.package; recomputeCsv(R); window.TAKEOFF_RESULT=R;
+          try{ sessionStorage.setItem("takeoff_result",JSON.stringify(R)); const k=lsKey(); if(k) localStorage.setItem(k,JSON.stringify(R)); }catch(e){}
+          render(); setSaveInd("💾 loaded from project","var(--grn)");
+        } else { setSaveInd("",""); }
+      }catch(e){ setSaveInd("",""); }
+    }
+  })();
 </script>
 </body>
 </html>
