@@ -101,7 +101,7 @@
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
-  const VERSION = "v0.23 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.24 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -287,12 +287,14 @@
       // gaps + conflicts
       ((gaps.length||conflicts.length)?'<div class="card"><h2>◷ Gaps &amp; ⚡ Conflicts</h2><div class="body twoup">'+
         (gaps.length?'<details open><summary>◷ Gaps to verify ('+gaps.length+')</summary><ul>'+
-          gaps.map(g=>'<li>'+esc(g.item)+(g.where?' <span class="src">'+esc(g.where)+'</span>':'')+
+          gaps.map((g,i)=>'<li>'+esc(g.item)+(g.where?' <span class="src">'+esc(g.where)+'</span>':'')+
+          ' <button class="applybtn" style="background:#9aa6b2;padding:1px 7px" onclick="dismissGap('+i+')" title="Remove this gap">✕</button>'+
           (g.suggested_action?'<br><span class="src">→ '+esc(g.suggested_action)+'</span>':'')+'</li>').join("")+'</ul></details>':'<div></div>')+
         (conflicts.length?'<details open><summary>⚡ Conflicts ('+conflicts.length+')</summary><ul>'+
           conflicts.map((c,i)=>'<li><b>'+esc(c.topic)+'</b>'+
+          ' <button class="applybtn" style="background:#9aa6b2;padding:1px 7px" onclick="dismissConflict('+i+')" title="Remove this conflict (no change to BOM)">✕</button>'+
           (c.drawing_says?' — drawing: '+esc(c.drawing_says):'')+(c.spec_says?' · spec: '+esc(c.spec_says):'')+
-          (c.recommendation?'<br><span class="src">→ '+esc(c.recommendation)+'</span> <button class="applybtn" onclick="applyConflict('+i+')">Apply</button>':'')+'</li>').join("")+'</ul></details>':'<div></div>')+
+          (c.recommendation?'<br><span class="src">→ '+esc(c.recommendation)+'</span> <button class="applybtn" onclick="applyConflict('+i+')">Apply &amp; resolve</button>':'')+'</li>').join("")+'</ul></details>':'<div></div>')+
         '</div></div>':'')+
 
       // compliance
@@ -493,6 +495,9 @@
     revise('Resolve the conflict on "'+(c.topic||"")+'": '+(c.recommendation||"use the specification")+
       '. Update the affected BOM rows accordingly. Do not change anything else.', { removeConflict:i });
   }
+  // Deterministic dismiss — just remove the gap/conflict note locally (no AI, no BOM change). Instant + reliable.
+  function dismissGap(i){ const R=loadResult(); if(!R.synopsis||!Array.isArray(R.synopsis.gaps)) return; R.synopsis.gaps.splice(i,1); saveResult(R); render(); }
+  function dismissConflict(i){ const R=loadResult(); if(!R.synopsis||!Array.isArray(R.synopsis.conflicts)) return; R.synopsis.conflicts.splice(i,1); saveResult(R); render(); }
 
   // A synopsis section is kept from the revise ONLY if it came back populated; otherwise the original is
   // preserved (the model sometimes omits unchanged sections on a small edit — never let them vanish).
@@ -509,7 +514,7 @@
       project:       _has(rs.project)?rs.project:os.project,
       scope_of_work: _has(rs.scope_of_work)?rs.scope_of_work:os.scope_of_work,
       decisions:     _has(rs.decisions)?rs.decisions:os.decisions,
-      gaps:          _has(rs.gaps)?rs.gaps:os.gaps,
+      gaps:          (rs.gaps!==undefined)?rs.gaps:(os.gaps||[]),  // honor an explicit [] (user cleared gaps); fall back only when omitted
       conflicts:     conflicts,
       compliance:    _has(rs.compliance)?rs.compliance:os.compliance,
       totals:        _has(rs.totals)?rs.totals:os.totals,
