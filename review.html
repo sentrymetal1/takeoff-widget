@@ -85,7 +85,7 @@
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
-  const VERSION = "v0.14 · 2026-06-02";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.15 · 2026-06-02";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -392,16 +392,14 @@
   }
 
   // ---- 3a Zoho write (BOM → staging) -----------------------------------------
+  // Commit via Railway — the widget runs standalone (no Creator SDK context), so the Zoho
+  // write (create record → upload CSV → set Run_Import) happens server-side using the app's OAuth.
   async function submitToZoho(importCsv, proj, mfg){
-    if(!(window.ZOHO && ZOHO.CREATOR && ZOHO.CREATOR.API)) throw new Error("Zoho SDK not loaded");
-    const add=await ZOHO.CREATOR.API.addRecord({appName:Z.APP,formName:Z.IMPORT_FORM,
-      data:{[Z.F.project]:proj,[Z.F.mfg]:mfg,[Z.F.mode]:Z.MODE_VALUE}});
-    const recId=(add&&(add.data?.ID||add.data?.data?.ID||add.ID))||null;
-    if(!recId) throw new Error("addRecord returned no id");
-    const file=new File([importCsv],"ai-takeoff-"+proj+".csv",{type:"text/csv"});
-    await ZOHO.CREATOR.API.uploadFile({appName:Z.APP,reportName:Z.IMPORT_REPORT,id:recId,fieldName:Z.F.file,file});
-    await ZOHO.CREATOR.API.updateRecord({appName:Z.APP,reportName:Z.IMPORT_REPORT,id:recId,data:{[Z.F.run]:"true"}});
-    return recId;
+    const r=await fetch(RAILWAY_URL+"/api/takeoff/commit",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({project_id:proj,manufacturer_id:mfg,import_csv:importCsv})});
+    const data=await r.json();
+    if(!r.ok||data.ok===false) throw new Error(data.error||("HTTP "+r.status));
+    return data.import_id;
   }
 
   async function approve(){
@@ -409,9 +407,7 @@
     const ap=document.getElementById("approve"); ap.disabled=true;
     const c=document.getElementById("commit"); c.style.display="block";
     const picks=DECISIONS.map(d=>'• '+esc(d.item)+'  →  <b>'+esc(d.sel)+'</b>').join("<br>")||"(none)";
-    const hasSDK = window.ZOHO && ZOHO.CREATOR && ZOHO.CREATOR.API;
-
-    if(hasSDK && R.import_csv && params.project_id){
+    if(!R.__demo && R.import_csv && params.project_id){
       c.innerHTML='<span class="spin"></span>Committing BOM to staging…';
       try{
         const recId = await submitToZoho(R.import_csv, params.project_id, params.manufacturer_id);

@@ -98,7 +98,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.12 (2026-06-02)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.15 (2026-06-02)";
     // Railway base URL (the material-compass-nesting-app backend that hosts /api/takeoff).
     const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
     // ~32 MB Anthropic request cap; warn the user before they waste a click.
@@ -213,26 +213,16 @@
     // in staging with NO manual upload. Three calls (the SDK can't attach a file at
     // create time): create the record → attach the CSV → flip Run_Import so the
     // On-Edit import workflow runs WITH the file present.
+    // Commit via Railway — the widget runs standalone (no Creator SDK context), so the Zoho
+    // write happens server-side using the app's OAuth.
     async function submitToZoho(importCsv, proj, mfg) {
-      if (!(window.ZOHO && ZOHO.CREATOR && ZOHO.CREATOR.API)) throw new Error("Zoho SDK not loaded");
-      // 1. create the import record (no file yet — the guarded submission workflow no-ops)
-      const add = await ZOHO.CREATOR.API.addRecord({
-        appName: Z.APP, formName: Z.IMPORT_FORM,
-        data: { [Z.F.project]: proj, [Z.F.mfg]: mfg, [Z.F.mode]: Z.MODE_VALUE },
+      const r = await fetch(RAILWAY_URL + "/api/takeoff/commit", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: proj, manufacturer_id: mfg, import_csv: importCsv }),
       });
-      const recId = (add && (add.data?.ID || add.data?.data?.ID || add.ID)) || null;
-      if (!recId) throw new Error("addRecord returned no record id: " + JSON.stringify(add));
-      // 2. attach the CSV to the file-upload field on that record
-      const file = new File([importCsv], "ai-takeoff-" + proj + ".csv", { type: "text/csv" });
-      await ZOHO.CREATOR.API.uploadFile({
-        appName: Z.APP, reportName: Z.IMPORT_REPORT, id: recId, fieldName: Z.F.file, file,
-      });
-      // 3. flip the flag → fires the On-Edit import workflow with the file present.
-      //    (Checkbox fields reject JS booleans — send the string "true"/"Yes" your field expects.)
-      await ZOHO.CREATOR.API.updateRecord({
-        appName: Z.APP, reportName: Z.IMPORT_REPORT, id: recId, data: { [Z.F.run]: "true" },
-      });
-      return recId;
+      const data = await r.json();
+      if (!r.ok || data.ok === false) throw new Error(data.error || ("HTTP " + r.status));
+      return data.import_id;
     }
 
     go.addEventListener("click", async () => {
@@ -298,7 +288,7 @@
           return;
         }
 
-        const canAutoSubmit = AUTO_SUBMIT && window.ZOHO && ZOHO.CREATOR && ZOHO.CREATOR.API;
+        const canAutoSubmit = AUTO_SUBMIT;  // commit goes through Railway now (no SDK needed)
         resultBox.innerHTML = '<div class="result ' + cls + '">' +
           '<b class="big">' + data.count + ' BOM rows ready.</b>' +
           '<div>' +
