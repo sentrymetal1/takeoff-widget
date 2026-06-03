@@ -86,13 +86,17 @@
 </head>
 <body>
 <div id="busy" class="busy"></div>
-<div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off · Project Review</span><a id="printBtn" href="#" onclick="printAll();return false;" style="margin-left:auto;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">🖨 Print</a><a id="newRun" href="#" style="margin-left:14px;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">↻ New take-off</a></div>
+<div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off · Project Review</span>
+  <a id="addBtn" href="#" onclick="document.getElementById('addFile').click();return false;" style="margin-left:auto;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">➕ Add drawings</a>
+  <a id="printBtn" href="#" onclick="printAll();return false;" style="margin-left:14px;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">🖨 Print</a>
+  <a id="newRun" href="#" style="margin-left:14px;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">↻ New take-off</a></div>
+<input type="file" id="addFile" accept="application/pdf" multiple style="display:none" onchange="addDrawings(this)">
 <div class="wrap" id="wrap"><div class="card"><div class="body">Loading take-off…</div></div></div>
 
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
-  const VERSION = "v0.16 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.17 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -160,8 +164,8 @@
     const R = loadResult();
     const rows = arr(R.rows);
     const s = R.synopsis || {};
-    DECISIONS = arr(s.decisions).map(d=>({
-      id:d.id||("d"+Math.random().toString(36).slice(2,6)), item:d.item||"(decision)",
+    DECISIONS = arr(s.decisions).map((d,i)=>({
+      id:"dec"+i, item:d.item||"(decision)",
       where:d.where||"", why:d.why_flagged||"", options:arr(d.options).length?d.options:["Include","Skip"],
       rec:d.ai_recommendation||"", sel:d.ai_recommendation||null,
     }));
@@ -296,6 +300,61 @@
   function toggleBom(){ BOM_EXPANDED=!BOM_EXPANDED; render(); }
   // Print the full package — expand the BOM first so every row is on the printout.
   function printAll(){ BOM_EXPANDED=true; render(); setTimeout(function(){ window.print(); }, 200); }
+
+  // ---- Add more drawings to THIS take-off (additive — merges, doesn't redo) ------------------
+  function readB64(f){ return new Promise(function(res,rej){ const r=new FileReader(); r.onerror=function(){rej(new Error("read failed: "+f.name));}; r.onload=function(){ res(String(r.result).split(",")[1]); }; r.readAsDataURL(f); }); }
+  function mergeList(a,b){ return (Array.isArray(a)?a:[]).concat(Array.isArray(b)?b:[]); }
+  function mergeAddon(cur, addon){
+    const out = JSON.parse(JSON.stringify(cur || {}));
+    out.rows = mergeList(cur.rows, addon.rows);
+    const cs = (cur && cur.synopsis) || {}, as = (addon && addon.synopsis) || {};
+    const sw1 = cs.scope_of_work || {}, sw2 = as.scope_of_work || {};
+    const proj = cs.project || as.project || {};
+    out.synopsis = {
+      project: Object.assign({}, proj, { sheets_read: mergeList(proj.sheets_read, as.project && as.project.sheets_read) }),
+      scope_of_work: {
+        fabricate: mergeList(sw1.fabricate, sw2.fabricate),
+        buyout:    mergeList(sw1.buyout, sw2.buyout),
+        by_others: mergeList(sw1.by_others, sw2.by_others),
+        send_out:  mergeList(sw1.send_out, sw2.send_out),
+      },
+      decisions:  mergeList(cs.decisions, as.decisions),
+      gaps:       mergeList(cs.gaps, as.gaps),
+      conflicts:  mergeList(cs.conflicts, as.conflicts),
+      compliance: mergeList(cs.compliance, as.compliance),
+      totals:     Object.assign({}, cs.totals),
+      confidence: cs.confidence || as.confidence,
+    };
+    out.cost_usd = (Number(cur.cost_usd) || 0) + (Number(addon.cost_usd) || 0);
+    return out;
+  }
+  async function addDrawings(input){
+    const files = [].slice.call(input.files).filter(function(f){ return f.type === "application/pdf"; });
+    input.value = "";
+    if(!files.length || window.__revising) return;
+    window.__revising = true;
+    document.querySelectorAll(".applybtn,#reviseBtn,#addBtn").forEach(function(b){ b.disabled = true; });
+    let secs=0; const fmt=function(){ const m=Math.floor(secs/60),s=secs%60; return m+":"+(s<10?"0":"")+s; };
+    const lbl = files.length + " more drawing" + (files.length>1?"s":"");
+    setBusy("&#10227; Reading "+lbl+"… 0:00 &nbsp;·&nbsp; please wait, don't close");
+    const tick=setInterval(function(){ secs++; setBusy("&#10227; Reading "+lbl+"… "+fmt()+" &nbsp;·&nbsp; please wait, don't close"); }, 1000);
+    const stop=function(){ clearInterval(tick); window.__revising=false; };
+    const reenable=function(){ document.querySelectorAll(".applybtn,#reviseBtn,#addBtn").forEach(function(b){ b.disabled=false; }); };
+    try{
+      const pdfs=[]; for(const f of files){ pdfs.push(await readB64(f)); }
+      const r=await fetch(RAILWAY_URL+"/api/takeoff",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({project_id:params.project_id,manufacturer_id:params.manufacturer_id,pdfs:pdfs,model:"sonnet"})});
+      const data=await r.json();
+      if(!r.ok||data.ok===false){ stop(); reenable(); setBusy("⚠ Add failed: "+esc(data.error||("HTTP "+r.status)),"err"); clearBusy(8000); return; }
+      const cur=loadResult();
+      const merged=mergeAddon(cur, data);
+      recomputeCsv(merged); saveResult(merged);
+      stop(); render(); window.scrollTo({top:0,behavior:"smooth"});
+      const added=(data.rows||[]).filter(function(x){return (Number(x.quantity)||0)>0;}).length;
+      const total=merged.rows.filter(function(x){return (Number(x.quantity)||0)>0;}).length;
+      setBusy("✓ Added "+added+" rows from "+files.length+" file"+(files.length>1?"s":"")+" — "+total+" total now (cost $"+(data.cost_usd!=null?data.cost_usd:"?")+")","ok"); clearBusy(8000);
+    }catch(e){ stop(); reenable(); setBusy("⚠ Error: "+esc(e.message),"err"); clearBusy(8000); }
+  }
   function _cell(v){ return String(v==null?"":v).replace(/[,\r\n]+/g," ").trim(); }
   function _pct(c){ const n=Number(c); return Number.isFinite(n)?String(Math.round(n*100)):""; }
   function _sft(n){ const raw=Number(n)||0; const ft=Math.max(0,Math.floor(raw)); return [ft,Math.round((raw-ft)*12)]; }
