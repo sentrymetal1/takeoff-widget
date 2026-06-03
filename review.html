@@ -71,6 +71,8 @@
   .grp-meta{font-weight:500;color:#8493a4;font-size:11px;margin-left:8px;}
   .pillbtn{font-size:11px;color:var(--blue);border:1px solid #cfe0f2;background:#f3f8fd;border-radius:5px;padding:1px 7px;margin-left:6px;cursor:pointer;}
   .ai{display:flex;gap:8px;} .ai input{flex:1;padding:10px 12px;border:1px solid #cdd3da;border-radius:8px;font-size:13px;}
+  .achip{display:inline-flex;align-items:center;gap:6px;font-size:11px;background:#eef4fb;border:1px solid #cfe0f2;color:#2b4a6f;border-radius:6px;padding:3px 8px;}
+  .achip b{cursor:pointer;color:#c0392b;font-weight:700;}
   .btn{border:0;border-radius:8px;padding:10px 16px;font-weight:600;cursor:pointer;font-size:13px;}
   .btn.ghost{background:#fff;border:1px solid var(--blue);color:var(--blue);} .btn.go{background:var(--blue);color:#fff;} .btn.go:disabled{opacity:.45;cursor:not-allowed;}
   .bar{position:sticky;bottom:0;background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px;box-shadow:0 -2px 8px rgba(0,0,0,.05);}
@@ -99,7 +101,7 @@
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
-  const VERSION = "v0.22 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.23 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -187,6 +189,7 @@
   let DECISIONS = [];   // working copy with .sel
   let CONFLICTS = [];   // for the per-conflict Apply buttons
   let BOM_EXPANDED = false;  // BOM table: show first 8 vs all + editable
+  let REVISE_ATTACHMENTS = [];  // reference docs attached to "Tell the AI to revise" [{kind,name,media_type?,data?,text?}]
 
   function render(){
     const R = loadResult();
@@ -310,9 +313,14 @@
 
       // tell-the-AI (3c)
       '<div class="card" id="reviseCard"><h2>💬 Tell the AI to revise</h2><div class="body">'+
-        '<div class="ai"><input id="aiInput" placeholder=\'e.g. "galvanize all exterior angles per spec, drop the davit cranes, add 4 bollards @ 6ft"\' />'+
+        '<div class="ai"><input id="aiInput" placeholder=\'e.g. "reconcile against the attached BOM — add anything I missed and fix quantities" · or "galvanize all exterior angles"\' />'+
+        '<button class="btn ghost" id="attachBtn" title="Attach a BOM sheet, spec, cut list, or marked-up drawing (PDF, image, or CSV) for the AI to reconcile against" onclick="document.getElementById(\'reviseFile\').click()">📎 Attach</button>'+
         '<button class="btn ghost" id="reviseBtn" onclick="doRevise()">Revise</button></div>'+
-        '<div id="aiEcho" style="font-size:12px;color:var(--mut);margin-top:8px;"></div></div></div>'+
+        '<input type="file" id="reviseFile" multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.csv,.txt" style="display:none" onchange="addReviseFiles(this)">'+
+        (REVISE_ATTACHMENTS.length?'<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;">'+attachChipsHtml()+'</div>':'')+
+        '<div id="aiEcho" style="font-size:12px;color:var(--mut);margin-top:8px;">'+
+          (REVISE_ATTACHMENTS.length?esc(REVISE_ATTACHMENTS.length+' file(s) attached — type how to use them, then Revise (e.g. "reconcile / merge / cross-check against this").'):'')+
+        '</div></div></div>'+
 
       // submit bar
       '<div class="bar"><div class="left" id="barLeft"></div>'+
@@ -444,8 +452,40 @@
 
   function doRevise(){
     const t=document.getElementById("aiInput").value.trim();
-    if(!t){ const e=document.getElementById("aiEcho"); if(e) e.textContent="Type an instruction first."; return; }
-    revise(t, {});
+    if(!t && !REVISE_ATTACHMENTS.length){ const e=document.getElementById("aiEcho"); if(e) e.textContent="Type an instruction (or attach a file) first."; return; }
+    // If a file is attached but no instruction, default to "reconcile against it".
+    const instr = t || "Reconcile the current take-off against the attached document(s): add any members I missed, remove extras, and correct quantities, sizes and specs to match.";
+    revise(instr, {});
+  }
+
+  // ---- Revise attachments (reference docs the AI reconciles against) ----------
+  function fileB64(f){ return new Promise(function(res,rej){ const r=new FileReader();
+    r.onload=function(){ const s=String(r.result||""); res(s.slice(s.indexOf(",")+1)); };
+    r.onerror=function(){ rej(new Error("read failed")); }; r.readAsDataURL(f); }); }
+  async function addReviseFiles(input){
+    const files=Array.prototype.slice.call(input.files||[]);
+    for(const f of files){
+      try{
+        const ext=(f.name.split(".").pop()||"").toLowerCase();
+        const isImg=/^image\//.test(f.type)||["png","jpg","jpeg","webp","gif"].indexOf(ext)>-1;
+        const isPdf=f.type==="application/pdf"||ext==="pdf";
+        const isText=["csv","txt"].indexOf(ext)>-1||/^text\//.test(f.type);
+        if(f.size>20*1024*1024){ alert("“"+f.name+"” is over 20 MB — attach a smaller file."); continue; }
+        if(isText){ REVISE_ATTACHMENTS.push({kind:"text",name:f.name,text:await f.text()}); }
+        else if(isImg){ REVISE_ATTACHMENTS.push({kind:"image",name:f.name,media_type:f.type||"image/png",data:await fileB64(f)}); }
+        else if(isPdf){ REVISE_ATTACHMENTS.push({kind:"pdf",name:f.name,media_type:"application/pdf",data:await fileB64(f)}); }
+        else { alert("“"+f.name+"” — unsupported type. Use PDF, image, or CSV/TXT. (Excel: save as PDF or CSV first.)"); }
+      }catch(e){ alert("Could not read “"+f.name+"”: "+e.message); }
+    }
+    input.value="";
+    render();
+  }
+  function removeAttach(i){ REVISE_ATTACHMENTS.splice(i,1); render(); }
+  function attachChipsHtml(){
+    return REVISE_ATTACHMENTS.map(function(a,i){
+      const icon=a.kind==="image"?"🖼":(a.kind==="text"?"📄":"📕");
+      return '<span class="achip">'+icon+" "+esc(a.name)+' <b onclick="removeAttach('+i+')" title="Remove">✕</b></span>';
+    }).join("");
   }
   // Per-conflict one-click: apply the AI's recommendation, and remove that conflict deterministically.
   function applyConflict(i){
@@ -495,7 +535,8 @@
     try{
       const r=await fetch(RAILWAY_URL+"/api/takeoff/revise",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({project_id:params.project_id,manufacturer_id:params.manufacturer_id,
-          instruction:instruction,model:"sonnet",current:{rows:cur.rows,synopsis:cur.synopsis}})});
+          instruction:instruction,model:"sonnet",current:{rows:cur.rows,synopsis:cur.synopsis},
+          attachments:REVISE_ATTACHMENTS})});
       const data=await r.json();
       if(!r.ok||data.ok===false){
         stop(); reenable();
@@ -507,6 +548,7 @@
       }
       const merged=mergeResult(cur, data, opts);
       saveResult(merged);
+      REVISE_ATTACHMENTS = [];  // consumed — clear so they don't re-send on the next revise
       stop();
       render(); // rebuilds the page (re-enables the buttons)
       window.scrollTo({top:0,behavior:"smooth"});
