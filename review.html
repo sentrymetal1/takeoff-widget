@@ -96,7 +96,7 @@
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
-  const VERSION = "v0.20 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.21 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -500,6 +500,20 @@
     if(!r.ok||data.ok===false) throw new Error(data.error||("HTTP "+r.status));
     return data.import_id;
   }
+  // Capture this shop's decisions so future take-offs pre-apply their preferences (Tier-3 learning).
+  function captureLearning(){
+    try{
+      if(!params.manufacturer_id) return;
+      const R=loadResult();
+      const ptype=(R.synopsis && R.synopsis.project && R.synopsis.project.type)||"";
+      const corrections=DECISIONS.filter(function(d){return d.sel;}).map(function(d){
+        return { context:d.item, ai_value:d.rec||"", human_value:d.sel, source:"decision" };
+      });
+      if(!corrections.length) return;
+      fetch(RAILWAY_URL+"/api/takeoff/learn",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({ manufacturer_id:params.manufacturer_id, project_type:ptype, corrections:corrections })}).catch(function(){});
+    }catch(e){}
+  }
 
   async function approve(){
     const R=loadResult();
@@ -510,6 +524,7 @@
       c.innerHTML='<span class="spin"></span>Committing BOM to staging…';
       try{
         const recId = await submitToZoho(R.import_csv, params.project_id, params.manufacturer_id);
+        captureLearning();  // store this shop's decisions for future take-offs (best-effort)
         if(Z.REVIEW_PAGE){
           c.innerHTML='<b>✓ BOM sent to staging.</b> Opening the review…'+commitList(picks);
           const url=Z.REVIEW_PAGE+"?import_id="+encodeURIComponent(recId||"")+"&project_id="+encodeURIComponent(params.project_id)+"&client_id="+encodeURIComponent(params.manufacturer_id||"");
