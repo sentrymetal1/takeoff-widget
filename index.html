@@ -98,7 +98,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.18 (2026-06-03)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.20 (2026-06-03)";
     // Railway base URL (the material-compass-nesting-app backend that hosts /api/takeoff).
     const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
     // ~32 MB Anthropic request cap; warn the user before they waste a click.
@@ -288,6 +288,7 @@
         // Premium tier → hand off to the full project approval page (review.html),
         // which renders the synopsis (scope / decisions / gaps / BOM) and commits.
         if (data.synopsis) {
+          data.__project = proj;  // tag so the review page can't confuse it with another project's take-off
           try { sessionStorage.setItem("takeoff_result", JSON.stringify(data)); } catch (e) {}
           try { if (proj) localStorage.setItem("mc_takeoff_" + proj, JSON.stringify(data)); } catch (e) {}
           location.href = "review.html?project_id=" + encodeURIComponent(proj) +

@@ -96,7 +96,7 @@
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
-  const VERSION = "v0.19 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.20 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -120,13 +120,17 @@
   // Results are saved to localStorage keyed by project, so closing & reopening this
   // page (same browser) restores the last take-off instead of losing a paid run.
   function lsKey(){ return params.project_id ? ("mc_takeoff_"+params.project_id) : null; }
+  // window + sessionStorage are GLOBAL (not project-keyed) — a result from another project must
+  // never be reused here, or you'd open Schutte and see Alden. Every result is tagged __project.
+  function sameProj(R){ return !!(R && params.project_id && String(R.__project||"")===String(params.project_id)); }
   function loadResult(){
-    if (window.TAKEOFF_RESULT) return window.TAKEOFF_RESULT;
-    try { const s=sessionStorage.getItem("takeoff_result"); if(s) return JSON.parse(s); } catch(e){}
-    try { const k=lsKey(); if(k){ const s=localStorage.getItem(k); if(s) return JSON.parse(s); } } catch(e){}
+    if (window.TAKEOFF_RESULT && sameProj(window.TAKEOFF_RESULT)) return window.TAKEOFF_RESULT;
+    try { const s=sessionStorage.getItem("takeoff_result"); if(s){ const R=JSON.parse(s); if(sameProj(R)) return R; } } catch(e){}
+    try { const k=lsKey(); if(k){ const s=localStorage.getItem(k); if(s) return JSON.parse(s); } } catch(e){}  // localStorage is already project-keyed
     return SAMPLE;
   }
   function saveResult(result){
+    if(result && params.project_id) result.__project = params.project_id;  // tag so it can't leak across projects
     window.TAKEOFF_RESULT = result;
     if(result && result.__demo) return;   // never persist demo/sample data (was polluting localStorage)
     try { sessionStorage.setItem("takeoff_result", JSON.stringify(result)); } catch(e){}
@@ -149,7 +153,11 @@
       setSaveInd(d.ok?"💾 saved to project":"⚠ save failed", d.ok?"var(--grn)":"var(--red)");
     }catch(e){ setSaveInd("⚠ save failed","var(--red)"); }
   }
-  function haveLive(){ try{ if(window.TAKEOFF_RESULT) return true; if(sessionStorage.getItem("takeoff_result")) return true; const k=lsKey(); if(k && localStorage.getItem(k)) return true; }catch(e){} return false; }
+  function haveLive(){ try{
+    if(window.TAKEOFF_RESULT && sameProj(window.TAKEOFF_RESULT)) return true;
+    const s=sessionStorage.getItem("takeoff_result"); if(s && sameProj(JSON.parse(s))) return true;
+    const k=lsKey(); if(k && localStorage.getItem(k)) return true;
+  }catch(e){} return false; }
 
   // ---- helpers ---------------------------------------------------------------
   const esc = (s)=>String(s==null?"":s).replace(/</g,"&lt;");
@@ -576,7 +584,7 @@
 
   // Arriving from the uploader the result is in sessionStorage — mirror it to localStorage
   // (keyed by project) so closing & reopening this page restores it instead of losing the run.
-  (function(){ try{ const s=sessionStorage.getItem("takeoff_result"); const k=lsKey(); if(s&&k) localStorage.setItem(k,s); }catch(e){} })();
+  (function(){ try{ const s=sessionStorage.getItem("takeoff_result"); const k=lsKey(); if(s&&k){ const R=JSON.parse(s); if(sameProj(R)) localStorage.setItem(k,s); } }catch(e){} })();
   // "New take-off" link → back to the uploader for this project
   (function(){ const lk=document.getElementById("newRun"); if(lk && params.project_id){ lk.href="index.html?project_id="+encodeURIComponent(params.project_id)+"&manufacturer_id="+encodeURIComponent(params.manufacturer_id||""); } })();
   (async function init(){
@@ -589,7 +597,7 @@
         const r=await fetch(RAILWAY_URL+"/api/takeoff/saved/"+encodeURIComponent(params.project_id));
         const d=await r.json();
         if(d.ok && d.found && d.package && Array.isArray(d.package.rows) && d.package.rows.length){
-          const R=d.package; recomputeCsv(R); window.TAKEOFF_RESULT=R;
+          const R=d.package; R.__project=params.project_id; recomputeCsv(R); window.TAKEOFF_RESULT=R;
           try{ sessionStorage.setItem("takeoff_result",JSON.stringify(R)); const k=lsKey(); if(k) localStorage.setItem(k,JSON.stringify(R)); }catch(e){}
           render(); setSaveInd("💾 loaded from project","var(--grn)");
         } else { setSaveInd("",""); }
