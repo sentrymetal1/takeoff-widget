@@ -98,7 +98,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.6 (2026-06-02)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.12 (2026-06-02)";
     // Railway base URL (the material-compass-nesting-app backend that hosts /api/takeoff).
     const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
     // ~32 MB Anthropic request cap; warn the user before they waste a click.
@@ -111,15 +111,16 @@
     // the file actually attached. See the Deluge trigger in INTEGRATION/SYNOPSIS docs.
     const AUTO_SUBMIT = true;            // set false to force the download path
     const Z = {
-      APP:           "type-formsheet-2-18-21",   // app link name (canonical — known good)
-      IMPORT_FORM:   "CSV_Import_Tool",          // CONFIRM: the form LINK name (addRecord target)
-      IMPORT_REPORT: "All_CSV_Import_Tool",      // CONFIRM: a report holding those records (upload/update target)
-      REVIEW_PAGE:   "https://customer.materialcompassportal.com/#Page:BOM_Staging_Review_Page", // CONFIRM
+      APP:           "type-formsheet-2-18-21",   // app link name
+      IMPORT_FORM:   "Import_BOM_Form",          // CSV Import Tool form (addRecord target)
+      IMPORT_REPORT: "Import_BOM_Form_Report",   // its report (uploadFile / updateRecord target)
+      REVIEW_PAGE:   "",                          // WIRE: staging-review page link name (optional)
+      MODE_VALUE:    "Append",                    // BOM Import Mode — Append keeps existing rows
       F: {
-        project: "Project_ID",          // CONFIRM
-        mfg:     "MFG_Client_Form",      // CONFIRM
-        mode:    "BOM_Import_Mode",      // CONFIRM (or drop from the data{} below)
-        file:    "BOM_CSV_File",         // CONFIRM (the file-upload field)
+        project: "Project_ID",
+        mfg:     "MFG_Client_Form",
+        mode:    "BOM_Import_Mode",
+        file:    "BOM_CSV_File",
         run:     "Run_Import",           // NEW field to add — the On-Edit trigger keys off this
       },
     };
@@ -217,7 +218,7 @@
       // 1. create the import record (no file yet — the guarded submission workflow no-ops)
       const add = await ZOHO.CREATOR.API.addRecord({
         appName: Z.APP, formName: Z.IMPORT_FORM,
-        data: { [Z.F.project]: proj, [Z.F.mfg]: mfg, [Z.F.mode]: "AI Take-off" },
+        data: { [Z.F.project]: proj, [Z.F.mfg]: mfg, [Z.F.mode]: Z.MODE_VALUE },
       });
       const recId = (add && (add.data?.ID || add.data?.data?.ID || add.ID)) || null;
       if (!recId) throw new Error("addRecord returned no record id: " + JSON.stringify(add));

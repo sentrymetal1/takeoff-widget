@@ -85,11 +85,14 @@
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
-  const VERSION = "v0.11 · 2026-06-02";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.12 · 2026-06-02";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
-    APP:"type-formsheet-2-18-21", IMPORT_FORM:"CSV_Import_Tool", IMPORT_REPORT:"All_CSV_Import_Tool",
-    REVIEW_PAGE:"https://customer.materialcompassportal.com/#Page:BOM_Staging_Review_Page",
+    APP:"type-formsheet-2-18-21",            // app link name
+    IMPORT_FORM:"Import_BOM_Form",           // CSV Import Tool form (addRecord target)
+    IMPORT_REPORT:"Import_BOM_Form_Report",  // its report (uploadFile / updateRecord target)
+    REVIEW_PAGE:"",                          // WIRE: staging-review page link name for the post-approve open (optional)
+    MODE_VALUE:"Append",                     // BOM Import Mode choice — Append keeps existing rows (Replace would wipe them)
     F:{project:"Project_ID",mfg:"MFG_Client_Form",mode:"BOM_Import_Mode",file:"BOM_CSV_File",run:"Run_Import"},
   };
 
@@ -389,7 +392,7 @@
   async function submitToZoho(importCsv, proj, mfg){
     if(!(window.ZOHO && ZOHO.CREATOR && ZOHO.CREATOR.API)) throw new Error("Zoho SDK not loaded");
     const add=await ZOHO.CREATOR.API.addRecord({appName:Z.APP,formName:Z.IMPORT_FORM,
-      data:{[Z.F.project]:proj,[Z.F.mfg]:mfg,[Z.F.mode]:"AI Take-off"}});
+      data:{[Z.F.project]:proj,[Z.F.mfg]:mfg,[Z.F.mode]:Z.MODE_VALUE}});
     const recId=(add&&(add.data?.ID||add.data?.data?.ID||add.ID))||null;
     if(!recId) throw new Error("addRecord returned no id");
     const file=new File([importCsv],"ai-takeoff-"+proj+".csv",{type:"text/csv"});
@@ -409,9 +412,13 @@
       c.innerHTML='<span class="spin"></span>Committing BOM to staging…';
       try{
         await submitToZoho(R.import_csv, params.project_id, params.manufacturer_id);
-        c.innerHTML='<b>✓ BOM sent to staging.</b> Opening the review…'+commitList(picks);
-        const url=Z.REVIEW_PAGE+(Z.REVIEW_PAGE.includes("?")?"&":"?")+"project_id="+params.project_id;
-        setTimeout(()=>window.open(url,"_top"),900);
+        if(Z.REVIEW_PAGE){
+          c.innerHTML='<b>✓ BOM sent to staging.</b> Opening the review…'+commitList(picks);
+          const url=Z.REVIEW_PAGE+(Z.REVIEW_PAGE.includes("?")?"&":"?")+"project_id="+params.project_id;
+          setTimeout(()=>window.open(url,"_top"),900);
+        } else {
+          c.innerHTML='<b>✓ BOM sent to staging review.</b> Open your project’s BOM staging to review &amp; Import Approved Rows.'+commitList(picks);
+        }
       }catch(e){ ap.disabled=false; c.innerHTML='<b style="color:var(--red)">Commit failed:</b> '+esc(e.message); }
     } else {
       // standalone / SAMPLE — show what WOULD commit
