@@ -85,13 +85,13 @@
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
-  const VERSION = "v0.12 · 2026-06-02";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.13 · 2026-06-02";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
     IMPORT_FORM:"Import_BOM_Form",           // CSV Import Tool form (addRecord target)
     IMPORT_REPORT:"Import_BOM_Form_Report",  // its report (uploadFile / updateRecord target)
-    REVIEW_PAGE:"",                          // WIRE: staging-review page link name for the post-approve open (optional)
+    REVIEW_PAGE:"https://customer.materialcompassportal.com/#Page:BOM_Staging_Review_Page", // staging review (same page the workflow opens)
     MODE_VALUE:"Append",                     // BOM Import Mode choice — Append keeps existing rows (Replace would wipe them)
     F:{project:"Project_ID",mfg:"MFG_Client_Form",mode:"BOM_Import_Mode",file:"BOM_CSV_File",run:"Run_Import"},
   };
@@ -411,11 +411,11 @@
     if(hasSDK && R.import_csv && params.project_id){
       c.innerHTML='<span class="spin"></span>Committing BOM to staging…';
       try{
-        await submitToZoho(R.import_csv, params.project_id, params.manufacturer_id);
+        const recId = await submitToZoho(R.import_csv, params.project_id, params.manufacturer_id);
         if(Z.REVIEW_PAGE){
           c.innerHTML='<b>✓ BOM sent to staging.</b> Opening the review…'+commitList(picks);
-          const url=Z.REVIEW_PAGE+(Z.REVIEW_PAGE.includes("?")?"&":"?")+"project_id="+params.project_id;
-          setTimeout(()=>window.open(url,"_top"),900);
+          const url=Z.REVIEW_PAGE+"?import_id="+encodeURIComponent(recId||"")+"&project_id="+encodeURIComponent(params.project_id)+"&client_id="+encodeURIComponent(params.manufacturer_id||"");
+          setTimeout(()=>window.open(url,"_top"),1200);
         } else {
           c.innerHTML='<b>✓ BOM sent to staging review.</b> Open your project’s BOM staging to review &amp; Import Approved Rows.'+commitList(picks);
         }
