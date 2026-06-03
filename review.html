@@ -75,15 +75,32 @@
   .achip b{cursor:pointer;color:#c0392b;font-weight:700;}
   .btn{border:0;border-radius:8px;padding:10px 16px;font-weight:600;cursor:pointer;font-size:13px;}
   .btn.ghost{background:#fff;border:1px solid var(--blue);color:var(--blue);} .btn.go{background:var(--blue);color:#fff;} .btn.go:disabled{opacity:.45;cursor:not-allowed;}
-  .bar{position:sticky;bottom:0;background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px;box-shadow:0 -2px 8px rgba(0,0,0,.05);}
+  .bar{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px;box-shadow:0 -2px 8px rgba(0,0,0,.05);}
   .bar .left{font-size:13px;color:var(--mut);} .bar .left b{color:var(--ink);}
+  /* conversational Tell-the-AI */
+  .chatthread{display:flex;flex-direction:column;gap:8px;max-height:360px;overflow:auto;padding-right:4px;}
+  .chathint{color:var(--mut);font-size:13px;line-height:1.5;}
+  .cmsg{display:flex;} .cmsg.u{justify-content:flex-end;}
+  .cmsg .bub{max-width:82%;padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.45;white-space:pre-wrap;word-break:break-word;}
+  .cmsg.u .bub{background:var(--blue);color:#fff;border-bottom-right-radius:4px;}
+  .cmsg.ai .bub{background:#eef2f7;color:#1f2c3d;border-bottom-left-radius:4px;}
+  .cmsg.ai.pending .bub{color:var(--mut);font-style:italic;}
+  .cmsg.err .bub{background:var(--redbg);color:var(--red);}
+  .cedit{display:block;margin-top:5px;font-size:11px;color:var(--grn);font-weight:600;}
+  .cfiles{margin-top:4px;font-size:11px;opacity:.85;}
+  .footerdock{position:sticky;bottom:0;z-index:6;display:flex;flex-direction:column;gap:8px;padding-top:8px;background:linear-gradient(to bottom, rgba(238,241,245,0) 0%, #eef1f5 22%);}
+  .chatdock{background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 12px;box-shadow:0 -2px 8px rgba(0,0,0,.05);}
+  .chatdock .ai{display:flex;gap:8px;align-items:center;}
+  .chatdock .ai input{flex:1;padding:10px 12px;border:1px solid #cdd3da;border-radius:8px;font-size:13px;}
+  .chatdock .iconbtn{border:1px solid var(--blue);background:#fff;color:var(--blue);border-radius:8px;padding:9px 11px;font-size:14px;cursor:pointer;line-height:1;}
+  .achips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;}
   .commit{margin-top:10px;font-size:13px;background:var(--grnbg);border:1px solid #bfe3c4;border-radius:8px;padding:12px 14px;display:none;} .commit ul{margin:8px 0 0;padding-left:18px;}
   .spin{display:inline-block;width:14px;height:14px;border:2px solid #cdd3da;border-top-color:var(--blue);border-radius:50%;animation:s .8s linear infinite;vertical-align:-2px;margin-right:6px;} @keyframes s{to{transform:rotate(360deg);}}
   .foot{text-align:center;color:#9aa6b2;font-size:11px;margin:6px 0 24px;}
   @media print {
     body{background:#fff;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
     .wrap,.appbar{max-width:100%;}
-    #printBtn,#newRun,.bar,.busy,.commit,#reviseCard,.applybtn,.pillbtn{display:none !important;}
+    #printBtn,#newRun,.bar,.busy,.commit,#reviseCard,.applybtn,.pillbtn,.footerdock,#chatCard{display:none !important;}
     .card{box-shadow:none;break-inside:avoid;}
     input[type=number]{border:none;padding:0;width:auto;background:transparent;font-size:12.5px;}
   }
@@ -101,7 +118,7 @@
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
-  const VERSION = "v0.24 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.25 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -313,23 +330,27 @@
         '</div>':'')+
       '</div></div>'+
 
-      // tell-the-AI (3c)
-      '<div class="card" id="reviseCard"><h2>💬 Tell the AI to revise</h2><div class="body">'+
-        '<div class="ai"><input id="aiInput" placeholder=\'e.g. "reconcile against the attached BOM — add anything I missed and fix quantities" · or "galvanize all exterior angles"\' />'+
-        '<button class="btn ghost" id="attachBtn" title="Attach a BOM sheet, spec, cut list, or marked-up drawing (PDF, image, or CSV) for the AI to reconcile against" onclick="document.getElementById(\'reviseFile\').click()">📎 Attach</button>'+
-        '<button class="btn ghost" id="reviseBtn" onclick="doRevise()">Revise</button></div>'+
-        '<input type="file" id="reviseFile" multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.csv,.txt" style="display:none" onchange="addReviseFiles(this)">'+
-        (REVISE_ATTACHMENTS.length?'<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;">'+attachChipsHtml()+'</div>':'')+
-        '<div id="aiEcho" style="font-size:12px;color:var(--mut);margin-top:8px;">'+
-          (REVISE_ATTACHMENTS.length?esc(REVISE_ATTACHMENTS.length+' file(s) attached — type how to use them, then Revise (e.g. "reconcile / merge / cross-check against this").'):'')+
-        '</div></div></div>'+
+      // tell-the-AI — conversational thread (3c)
+      '<div class="card" id="chatCard"><h2>💬 Tell the AI <span class="lt">— ask questions or request changes; it remembers the conversation</span></h2>'+
+        '<div class="body"><div id="chatThread" class="chatthread">'+chatThreadHtml()+'</div></div></div>'+
 
-      // submit bar
-      '<div class="bar"><div class="left" id="barLeft"></div>'+
-        '<div style="display:flex;gap:8px;align-items:center">'+
-          '<button class="btn ghost" onclick="downloadBom()">↓ BOM CSV</button>'+
-          '<button class="btn go" id="approve" onclick="approve()">Approve &amp; Submit Project →</button>'+
-        '</div></div>'+
+      // sticky footer: chat input dock + action bar (one pinned block)
+      '<div class="footerdock">'+
+        '<div class="chatdock">'+
+          (REVISE_ATTACHMENTS.length?'<div class="achips">'+attachChipsHtml()+'</div>':'')+
+          '<div class="ai">'+
+            '<button class="iconbtn" id="attachBtn" title="Attach a BOM sheet, spec, cut list, or marked-up drawing (PDF, image, or CSV)" onclick="document.getElementById(\'reviseFile\').click()">📎</button>'+
+            '<input id="aiInput" placeholder=\'Ask or tell the AI… e.g. "galvanize all exterior angles" · "drop the davit cranes" · "what spec did you use for the angles?"\' onkeydown="if(event.key===\'Enter\'){event.preventDefault();sendChat();}" />'+
+            '<button class="btn go" id="sendBtn" onclick="sendChat()">Send</button>'+
+          '</div>'+
+          '<input type="file" id="reviseFile" multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.csv,.txt" style="display:none" onchange="addReviseFiles(this)">'+
+        '</div>'+
+        '<div class="bar"><div class="left" id="barLeft"></div>'+
+          '<div style="display:flex;gap:8px;align-items:center">'+
+            '<button class="btn ghost" onclick="downloadBom()">↓ BOM CSV</button>'+
+            '<button class="btn go" id="approve" onclick="approve()">Approve &amp; Submit Project →</button>'+
+          '</div></div>'+
+      '</div>'+
       '<div class="commit" id="commit"></div>'+
       '<div class="foot">Material Compass · AI Take-off · '+(haveLive()?'live':'sample data')+' · '+VERSION+'</div>';
 
@@ -498,6 +519,66 @@
   // Deterministic dismiss — just remove the gap/conflict note locally (no AI, no BOM change). Instant + reliable.
   function dismissGap(i){ const R=loadResult(); if(!R.synopsis||!Array.isArray(R.synopsis.gaps)) return; R.synopsis.gaps.splice(i,1); saveResult(R); render(); }
   function dismissConflict(i){ const R=loadResult(); if(!R.synopsis||!Array.isArray(R.synopsis.conflicts)) return; R.synopsis.conflicts.splice(i,1); saveResult(R); render(); }
+
+  // ---- Conversational "Tell the AI" — multi-turn chat that remembers the thread ----------
+  function chatThreadHtml(){
+    const R=loadResult(); const ch=(R&&R.chat)||[];
+    if(!ch.length) return '<div class="chathint">Ask a question about the take-off, or tell me what to change — e.g. “galvanize all exterior angles,” “drop the davit cranes,” “add 4 bollards @ 6ft,” or “what spec did you use for the angles?” I’ll remember the conversation and apply edits to the BOM as we go.</div>';
+    return ch.map(function(m){
+      if(m.role==="user"){
+        return '<div class="cmsg u"><div class="bub">'+esc(m.text)+
+          (m.files&&m.files.length?'<div class="cfiles">📎 '+m.files.map(esc).join(", ")+'</div>':'')+'</div></div>';
+      }
+      const cls = m.pending?"ai pending":(m.err?"ai err":"ai");
+      const badge = m.edited?'<span class="cedit">✎ updated the take-off</span>':'';
+      const txt = m.pending?'<span class="spin"></span>AI is thinking…':esc(m.text);
+      return '<div class="cmsg '+cls+'"><div class="bub">'+txt+badge+'</div></div>';
+    }).join("");
+  }
+  function scrollChatToBottom(){ const el=document.getElementById("chatThread"); if(el) el.scrollTop=el.scrollHeight; }
+
+  async function sendChat(){
+    if(window.__chatting) return;
+    const inp=document.getElementById("aiInput");
+    const t=(inp?inp.value:"").trim();
+    if(!t && !REVISE_ATTACHMENTS.length){ if(inp) inp.focus(); return; }
+    window.__chatting=true;
+    const atNames = REVISE_ATTACHMENTS.length?REVISE_ATTACHMENTS.map(function(a){return a.name;}):null;
+    const sentAttach = REVISE_ATTACHMENTS.slice();   // snapshot for this turn
+    const R=loadResult(); R.chat=R.chat||[];
+    R.chat.push({role:"user", text: t || "(reconcile against the attached file)", files: atNames});
+    R.chat.push({role:"ai", pending:true});
+    saveResult(R); render(); scrollChatToBottom();
+    // history for the model = prior turns + this user turn (text only; current package sent fresh below)
+    const hist=(loadResult().chat||[]).filter(function(m){return !m.pending;})
+      .map(function(m){ return {role: m.role==="ai"?"assistant":"user", text: m.text||""}; });
+    const cur=loadResult();
+    try{
+      const r=await fetch(RAILWAY_URL+"/api/takeoff/chat",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({project_id:params.project_id,manufacturer_id:params.manufacturer_id,model:"sonnet",
+          messages:hist, current:{rows:cur.rows,synopsis:cur.synopsis}, attachments:sentAttach})});
+      const data=await r.json();
+      const R2=loadResult(); R2.chat=(R2.chat||[]).filter(function(m){return !m.pending;});
+      if(!r.ok||data.ok===false){
+        const m=String(data.error||("HTTP "+r.status));
+        const friendly=(m.indexOf("rate_limit")>-1||m.indexOf("429")>-1)?"Anthropic rate limit hit — wait ~60s and try again.":m;
+        R2.chat.push({role:"ai", err:true, text:"⚠ "+friendly}); saveResult(R2); render(); scrollChatToBottom(); window.__chatting=false; return;
+      }
+      if(data.edited){
+        const merged=mergeResult(R2, data, {});               // apply rows/synopsis/csvs
+        merged.chat=R2.chat.concat([{role:"ai", edited:true, text: data.reply||data.notes||"Updated the take-off."}]);
+        saveResult(merged);
+        REVISE_ATTACHMENTS=[];                                  // consumed
+      } else {
+        R2.chat.push({role:"ai", text: data.reply||"(no reply)"}); saveResult(R2);
+      }
+      render(); scrollChatToBottom();
+    }catch(e){
+      const R3=loadResult(); R3.chat=(R3.chat||[]).filter(function(m){return !m.pending;});
+      R3.chat.push({role:"ai", err:true, text:"⚠ Network error: "+e.message}); saveResult(R3); render(); scrollChatToBottom();
+    }
+    window.__chatting=false;
+  }
 
   // A synopsis section is kept from the revise ONLY if it came back populated; otherwise the original is
   // preserved (the model sometimes omits unchanged sections on a small edit — never let them vanish).
