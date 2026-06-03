@@ -20,8 +20,8 @@
   }
   *{box-sizing:border-box;}
   body{font-family:'Segoe UI',system-ui,sans-serif;margin:0;padding:24px;background:#eef1f5;color:var(--ink);}
-  .wrap{max-width:780px;margin:0 auto;}
-  .appbar{max-width:780px;margin:0 auto 14px;display:flex;align-items:center;gap:10px;padding:2px;}
+  .wrap{max-width:1100px;margin:0 auto;}
+  .appbar{max-width:1100px;margin:0 auto 14px;display:flex;align-items:center;gap:10px;padding:2px;}
   .appbar .brand{font-weight:800;font-size:16px;color:var(--blue);letter-spacing:.2px;}
   .appbar .page{font-size:13px;color:var(--mut);border-left:1px solid var(--line);padding-left:10px;}
   .applybtn{font-size:11px;color:#fff;background:var(--blue);border:0;border-radius:5px;padding:2px 9px;cursor:pointer;margin-left:4px;}
@@ -75,17 +75,24 @@
   .commit{margin-top:10px;font-size:13px;background:var(--grnbg);border:1px solid #bfe3c4;border-radius:8px;padding:12px 14px;display:none;} .commit ul{margin:8px 0 0;padding-left:18px;}
   .spin{display:inline-block;width:14px;height:14px;border:2px solid #cdd3da;border-top-color:var(--blue);border-radius:50%;animation:s .8s linear infinite;vertical-align:-2px;margin-right:6px;} @keyframes s{to{transform:rotate(360deg);}}
   .foot{text-align:center;color:#9aa6b2;font-size:11px;margin:6px 0 24px;}
+  @media print {
+    body{background:#fff;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+    .wrap,.appbar{max-width:100%;}
+    #printBtn,#newRun,.bar,.busy,.commit,#reviseCard,.applybtn,.pillbtn{display:none !important;}
+    .card{box-shadow:none;break-inside:avoid;}
+    input[type=number]{border:none;padding:0;width:auto;background:transparent;font-size:12.5px;}
+  }
 </style>
 </head>
 <body>
 <div id="busy" class="busy"></div>
-<div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off · Project Review</span><a id="newRun" href="#" style="margin-left:auto;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">↻ New take-off</a></div>
+<div class="appbar"><span class="brand">Material Compass</span><span class="page">AI Take-off · Project Review</span><a id="printBtn" href="#" onclick="printAll();return false;" style="margin-left:auto;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">🖨 Print</a><a id="newRun" href="#" style="margin-left:14px;font-size:12px;color:var(--blue);text-decoration:none;font-weight:600">↻ New take-off</a></div>
 <div class="wrap" id="wrap"><div class="card"><div class="body">Loading take-off…</div></div></div>
 
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
-  const VERSION = "v0.15 · 2026-06-02";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.16 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -245,7 +252,7 @@
       '</div></div>'+
 
       // tell-the-AI (3c)
-      '<div class="card"><h2>💬 Tell the AI to revise</h2><div class="body">'+
+      '<div class="card" id="reviseCard"><h2>💬 Tell the AI to revise</h2><div class="body">'+
         '<div class="ai"><input id="aiInput" placeholder=\'e.g. "galvanize all exterior angles per spec, drop the davit cranes, add 4 bollards @ 6ft"\' />'+
         '<button class="btn ghost" id="reviseBtn" onclick="doRevise()">Revise</button></div>'+
         '<div id="aiEcho" style="font-size:12px;color:var(--mut);margin-top:8px;"></div></div></div>'+
@@ -287,6 +294,8 @@
 
   // ---- BOM expand + inline edit ----------------------------------------------
   function toggleBom(){ BOM_EXPANDED=!BOM_EXPANDED; render(); }
+  // Print the full package — expand the BOM first so every row is on the printout.
+  function printAll(){ BOM_EXPANDED=true; render(); setTimeout(function(){ window.print(); }, 200); }
   function _cell(v){ return String(v==null?"":v).replace(/[,\r\n]+/g," ").trim(); }
   function _pct(c){ const n=Number(c); return Number.isFinite(n)?String(Math.round(n*100)):""; }
   function _sft(n){ const raw=Number(n)||0; const ft=Math.max(0,Math.floor(raw)); return [ft,Math.round((raw-ft)*12)]; }
