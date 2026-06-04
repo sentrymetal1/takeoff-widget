@@ -94,6 +94,8 @@
   .chatdock .ai input{flex:1;padding:10px 12px;border:1px solid #cdd3da;border-radius:8px;font-size:13px;}
   .chatdock .iconbtn{border:1px solid var(--blue);background:#fff;color:var(--blue);border-radius:8px;padding:9px 11px;font-size:14px;cursor:pointer;line-height:1;}
   .achips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;}
+  .balchip{display:inline-flex;align-items:center;gap:4px;font-size:13px;font-weight:700;color:var(--grn);background:var(--grnbg);border:1px solid #bfe3c4;border-radius:8px;padding:7px 11px;}
+  .balchip .balsub{font-weight:500;color:#5b8a5e;font-size:11px;}
   .commit{margin-top:10px;font-size:13px;background:var(--grnbg);border:1px solid #bfe3c4;border-radius:8px;padding:12px 14px;display:none;} .commit ul{margin:8px 0 0;padding-left:18px;}
   .spin{display:inline-block;width:14px;height:14px;border:2px solid #cdd3da;border-top-color:var(--blue);border-radius:50%;animation:s .8s linear infinite;vertical-align:-2px;margin-right:6px;} @keyframes s{to{transform:rotate(360deg);}}
   .foot{text-align:center;color:#9aa6b2;font-size:11px;margin:6px 0 24px;}
@@ -118,7 +120,7 @@
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
-  const VERSION = "v0.25 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.26 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -207,6 +209,7 @@
   let CONFLICTS = [];   // for the per-conflict Apply buttons
   let BOM_EXPANDED = false;  // BOM table: show first 8 vs all + editable
   let REVISE_ATTACHMENTS = [];  // reference docs attached to "Tell the AI to revise" [{kind,name,media_type?,data?,text?}]
+  let ACCOUNT = null;           // {balance, price:{premium,basic}} — prepaid meter (Phase 0 visual)
 
   function render(){
     const R = loadResult();
@@ -347,6 +350,7 @@
         '</div>'+
         '<div class="bar"><div class="left" id="barLeft"></div>'+
           '<div style="display:flex;gap:8px;align-items:center">'+
+            (ACCOUNT?'<span class="balchip" title="Your prepaid take-off balance — Phase 0 is visual only, no charges. Each take-off draws down '+(ACCOUNT.price?'$'+Number(ACCOUNT.price.premium).toFixed(2):'the price')+'.">💳 Balance $'+Number(ACCOUNT.balance).toFixed(2)+(ACCOUNT.price?' <span class="balsub">· $'+Number(ACCOUNT.price.premium).toFixed(2)+'/take-off</span>':'')+'</span>':'')+
             '<button class="btn ghost" onclick="downloadBom()">↓ BOM CSV</button>'+
             '<button class="btn go" id="approve" onclick="approve()">Approve &amp; Submit Project →</button>'+
           '</div></div>'+
@@ -536,6 +540,16 @@
     }).join("");
   }
   function scrollChatToBottom(){ const el=document.getElementById("chatThread"); if(el) el.scrollTop=el.scrollHeight; }
+
+  // Prepaid meter (Phase 0 = visual only, no charges). Pull the shop's banked balance for the green bar.
+  async function fetchAccount(){
+    if(!params.manufacturer_id) return;
+    try{
+      const r=await fetch(RAILWAY_URL+"/api/takeoff/account/"+encodeURIComponent(params.manufacturer_id));
+      const d=await r.json();
+      if(d&&d.ok){ ACCOUNT=d; render(); }
+    }catch(e){ /* non-fatal — bar just omits the balance chip */ }
+  }
 
   async function sendChat(){
     if(window.__chatting) return;
@@ -760,6 +774,7 @@
   (function(){ const lk=document.getElementById("newRun"); if(lk && params.project_id){ lk.href="index.html?project_id="+encodeURIComponent(params.project_id)+"&manufacturer_id="+encodeURIComponent(params.manufacturer_id||""); } })();
   (async function init(){
     render();                                  // show local/sample immediately
+    fetchAccount();                            // prepaid balance for the green bar (Phase 0 visual)
     if(haveLive()){
       scheduleZohoSave();                      // persist the freshly-arrived take-off to the project
     } else if(params.project_id){
