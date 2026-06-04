@@ -120,7 +120,7 @@
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
-  const VERSION = "v0.26 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.27 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -368,7 +368,10 @@
       box.innerHTML = DECISIONS.map(d=>{
         const undec=d.sel==null;
         return '<div class="dec '+(undec?'undec':'')+'">'+
-          '<div class="q">'+esc(d.item)+'</div>'+
+          '<div class="q" style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">'+
+            '<span>'+esc(d.item)+'</span>'+
+            '<button class="applybtn" style="background:#9aa6b2;padding:1px 7px;flex:none" onclick="dismissDecision(\''+d.id+'\')" title="Remove this decision (it won\'t apply to the take-off)">✕</button>'+
+          '</div>'+
           '<div class="why">'+esc(d.why)+(d.where?' <span class="src">· '+esc(d.where)+'</span>':'')+'</div>'+
           '<div class="opts">'+d.options.map(o=>'<span class="opt '+(d.sel===o?'sel ':'')+(d.rec===o?'rec':'')+'" onclick="pick(\''+d.id+'\',\''+esc(o).replace(/\x27/g,"")+'\')">'+esc(o)+'</span>').join("")+'</div>'+
           (undec?'<div class="decnote">★ needs your decision.</div>':'')+'</div>';
@@ -388,6 +391,14 @@
     const idx=parseInt(String(id).replace("dec",""),10);
     const R=loadResult();
     if(R && R.synopsis && Array.isArray(R.synopsis.decisions) && R.synopsis.decisions[idx]){ R.synopsis.decisions[idx].selected=v; saveResult(R); }
+  }
+  // Deterministic remove of a decision (local splice; no AI). idx is encoded in the "dec<i>" id.
+  function dismissDecision(id){
+    const idx=parseInt(String(id).replace("dec",""),10);
+    const R=loadResult();
+    if(R && R.synopsis && Array.isArray(R.synopsis.decisions) && idx>=0 && idx<R.synopsis.decisions.length){
+      R.synopsis.decisions.splice(idx,1); saveResult(R); render();
+    }
   }
 
   // ---- BOM expand + inline edit ----------------------------------------------
