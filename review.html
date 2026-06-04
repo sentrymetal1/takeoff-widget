@@ -96,7 +96,7 @@
   .achips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;}
   .balchip{display:inline-flex;align-items:center;gap:4px;font-size:13px;font-weight:700;color:var(--grn);background:var(--grnbg);border:1px solid #bfe3c4;border-radius:8px;padding:7px 11px;}
   .balchip .balsub{font-weight:500;color:#5b8a5e;font-size:11px;}
-  .scopearea{width:100%;min-height:280px;padding:12px 14px;border:1px solid #cdd3da;border-radius:8px;font-family:'Segoe UI',system-ui,sans-serif;font-size:12.5px;line-height:1.6;resize:vertical;}
+  .scopearea{flex:1;min-width:0;min-height:80px;padding:9px 12px;border:1px solid #cdd3da;border-radius:8px;font-family:'Segoe UI',system-ui,sans-serif;font-size:12.5px;line-height:1.55;resize:vertical;}
   .commit{margin-top:10px;font-size:13px;background:var(--grnbg);border:1px solid #bfe3c4;border-radius:8px;padding:12px 14px;display:none;} .commit ul{margin:8px 0 0;padding-left:18px;}
   .spin{display:inline-block;width:14px;height:14px;border:2px solid #cdd3da;border-top-color:var(--blue);border-radius:50%;animation:s .8s linear infinite;vertical-align:-2px;margin-right:6px;} @keyframes s{to{transform:rotate(360deg);}}
   .foot{text-align:center;color:#9aa6b2;font-size:11px;margin:6px 0 24px;}
@@ -121,7 +121,7 @@
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
-  const VERSION = "v0.30 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.31 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -405,39 +405,28 @@
     const R=loadResult();
     if(R && R.synopsis && Array.isArray(R.synopsis.decisions) && R.synopsis.decisions[idx]){ R.synopsis.decisions[idx].selected=v; saveResult(R); }
   }
-  // ---- Scope of Work editor — ONE free-text box (categories kept as headers; no AI) ----------
+  // ---- Scope of Work editor — one free-text box PER category (no AI) ----------
   function ensureScope(R){ if(!R.synopsis) R.synopsis={}; if(!R.synopsis.scope_of_work) R.synopsis.scope_of_work={}; return R; }
-  // scope object → editable text (CATEGORY headers + one "- item" per line)
-  function scopeToText(sw){
+  function scopeEditHtml(sw){
     sw = sw||{};
     return SCOPE_CATS.map(function(c){
-      const items=arr(sw[c[0]]).filter(function(x){ return String(x==null?"":x).trim(); });
-      return c[1].toUpperCase()+"\n"+items.map(function(it){ return "- "+it; }).join("\n");
-    }).join("\n\n");
-  }
-  // text back → scope object (lenient: lines stay under the last seen header; bullets stripped)
-  function parseScopeText(txt){
-    const out={fabricate:[],buyout:[],by_others:[],send_out:[]};
-    const HDR={"FABRICATE":"fabricate","BUYOUT":"buyout","BY OTHERS":"by_others","SEND OUT":"send_out"};
-    let cur="fabricate";
-    (txt||"").split(/\r?\n/).forEach(function(line){
-      const t=line.trim(); if(!t) return;
-      const key=t.toUpperCase().replace(/:$/,"").replace(/[-\s]+/g," ").trim();
-      if(HDR[key]){ cur=HDR[key]; return; }
-      const item=t.replace(/^[-•*]\s*/,"").trim();
-      if(item) out[cur].push(item);
-    });
-    return out;
-  }
-  function scopeEditHtml(sw){
-    return '<textarea id="scopeText" class="scopearea" spellcheck="true" onchange="commitScopeText()">'+esc(scopeToText(sw))+'</textarea>'+
-      '<div class="src" style="margin-top:6px">Edit freely — one item per line. Keep the <b>CATEGORY</b> headers (FABRICATE / BUYOUT / BY OTHERS / SEND-OUT) so each line routes correctly. Saves when you click <b>done</b>.</div>';
+      const field=c[0], lbl=c[1], k=c[2];
+      const items=arr(sw[field]).filter(function(x){ return String(x==null?"":x).trim(); });
+      return '<div class="stream"><div class="tag '+k+'">'+lbl+'</div>'+
+        '<textarea id="scopeText_'+field+'" class="scopearea" spellcheck="true" onchange="commitScopeText()" placeholder="One '+esc(lbl)+' item per line…">'+esc(items.join("\n"))+'</textarea>'+
+      '</div></div>';
+    }).join("")+
+    '<div class="src" style="margin-top:8px">One item per line in each box. Saves when you click out of a box or hit <b>done</b>.</div>';
   }
   function commitScopeText(){
-    const ta=document.getElementById("scopeText"); if(!ta) return;
     const R=ensureScope(loadResult());
-    R.synopsis.scope_of_work=parseScopeText(ta.value);
-    saveResult(R);
+    let any=false;
+    SCOPE_CATS.forEach(function(c){
+      const ta=document.getElementById("scopeText_"+c[0]); if(!ta) return;
+      any=true;
+      R.synopsis.scope_of_work[c[0]] = ta.value.split(/\r?\n/).map(function(s){ return s.trim(); }).filter(Boolean);
+    });
+    if(any) saveResult(R);
   }
   function toggleScopeEdit(){ if(SCOPE_EDIT) commitScopeText(); SCOPE_EDIT=!SCOPE_EDIT; render(); }
 
