@@ -120,7 +120,7 @@
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
-  const VERSION = "v0.27 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.28 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -212,6 +212,7 @@
   let ACCOUNT = null;           // {balance, price:{premium,basic}} — prepaid meter (Phase 0 visual)
 
   function render(){
+    const _aiKeep = (document.getElementById("aiInput")||{}).value;  // preserve in-progress chat text across re-render
     const R = loadResult();
     const rows = arr(R.rows);
     const s = R.synopsis || {};
@@ -343,7 +344,7 @@
           (REVISE_ATTACHMENTS.length?'<div class="achips">'+attachChipsHtml()+'</div>':'')+
           '<div class="ai">'+
             '<button class="iconbtn" id="attachBtn" title="Attach a BOM sheet, spec, cut list, or marked-up drawing (PDF, image, or CSV)" onclick="document.getElementById(\'reviseFile\').click()">📎</button>'+
-            '<input id="aiInput" placeholder=\'Ask or tell the AI… e.g. "galvanize all exterior angles" · "drop the davit cranes" · "what spec did you use for the angles?"\' onkeydown="if(event.key===\'Enter\'){event.preventDefault();sendChat();}" />'+
+            '<input id="aiInput" placeholder=\'Ask or tell the AI… paste a screenshot, or e.g. "galvanize all exterior angles" · "what spec did you use?"\' onkeydown="if(event.key===\'Enter\'){event.preventDefault();sendChat();}" onpaste="handlePaste(event)" />'+
             '<button class="btn go" id="sendBtn" onclick="sendChat()">Send</button>'+
           '</div>'+
           '<input type="file" id="reviseFile" multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.csv,.txt" style="display:none" onchange="addReviseFiles(this)">'+
@@ -358,6 +359,7 @@
       '<div class="commit" id="commit"></div>'+
       '<div class="foot">Material Compass · AI Take-off · '+(haveLive()?'live':'sample data')+' · '+VERSION+'</div>';
 
+    if(_aiKeep){ const _ai=document.getElementById("aiInput"); if(_ai) _ai.value=_aiKeep; }  // restore typed chat text
     renderDecisions();
   }
 
@@ -519,6 +521,27 @@
     render();
   }
   function removeAttach(i){ REVISE_ATTACHMENTS.splice(i,1); render(); }
+  // Paste a screenshot straight into the chat — grab image(s) off the clipboard as attachments.
+  function handlePaste(e){
+    const items=((e.clipboardData||window.clipboardData||{}).items)||[];
+    let grabbed=false;
+    for(let i=0;i<items.length;i++){
+      const it=items[i];
+      if(it && it.type && it.type.indexOf("image/")===0){ const f=it.getAsFile(); if(f){ grabbed=true; addPastedImage(f, it.type); } }
+    }
+    if(grabbed) e.preventDefault();   // don't dump the raw blob into the text box
+  }
+  async function addPastedImage(f, mime){
+    try{
+      if(f.size>20*1024*1024){ alert("Pasted image is over 20 MB — paste a smaller crop."); return; }
+      const keep=(document.getElementById("aiInput")||{}).value;
+      const data=await fileB64(f);
+      const n=REVISE_ATTACHMENTS.filter(function(a){return a.kind==="image";}).length+1;
+      REVISE_ATTACHMENTS.push({kind:"image", name:"screenshot-"+n+".png", media_type:mime||f.type||"image/png", data:data});
+      render();
+      const inp=document.getElementById("aiInput"); if(inp){ inp.value=keep||""; inp.focus(); }
+    }catch(err){ alert("Could not read pasted image: "+err.message); }
+  }
   function attachChipsHtml(){
     return REVISE_ATTACHMENTS.map(function(a,i){
       const icon=a.kind==="image"?"🖼":(a.kind==="text"?"📄":"📕");
