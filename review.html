@@ -96,6 +96,8 @@
   .achips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;}
   .balchip{display:inline-flex;align-items:center;gap:4px;font-size:13px;font-weight:700;color:var(--grn);background:var(--grnbg);border:1px solid #bfe3c4;border-radius:8px;padding:7px 11px;}
   .balchip .balsub{font-weight:500;color:#5b8a5e;font-size:11px;}
+  .scoperow{display:flex;gap:6px;align-items:center;margin-bottom:6px;}
+  .scopeinput{flex:1;padding:6px 9px;border:1px solid #cdd3da;border-radius:6px;font-size:12.5px;}
   .commit{margin-top:10px;font-size:13px;background:var(--grnbg);border:1px solid #bfe3c4;border-radius:8px;padding:12px 14px;display:none;} .commit ul{margin:8px 0 0;padding-left:18px;}
   .spin{display:inline-block;width:14px;height:14px;border:2px solid #cdd3da;border-top-color:var(--blue);border-radius:50%;animation:s .8s linear infinite;vertical-align:-2px;margin-right:6px;} @keyframes s{to{transform:rotate(360deg);}}
   .foot{text-align:center;color:#9aa6b2;font-size:11px;margin:6px 0 24px;}
@@ -120,7 +122,7 @@
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
-  const VERSION = "v0.28 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.29 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -185,6 +187,8 @@
 
   // ---- helpers ---------------------------------------------------------------
   const esc = (s)=>String(s==null?"":s).replace(/</g,"&lt;");
+  const escAttr = (s)=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  const SCOPE_CATS = [["fabricate","Fabricate","fab"],["buyout","Buyout","buy"],["by_others","By others","oth"],["send_out","Send-out","snd"]];
   const arr = (a)=>Array.isArray(a)?a:[];
   const confClass=(c)=> c>=0.8?"hi":c>=0.5?"md":"lo";
   const confBadge=(c)=> '<span class="conf c-'+confClass(c)+'">'+Math.round((c||0)*100)+'% confident</span>';
@@ -208,6 +212,7 @@
   let DECISIONS = [];   // working copy with .sel
   let CONFLICTS = [];   // for the per-conflict Apply buttons
   let BOM_EXPANDED = false;  // BOM table: show first 8 vs all + editable
+  let SCOPE_EDIT = false;    // Scope of Work: edit mode (add/edit/remove write-ups)
   let REVISE_ATTACHMENTS = [];  // reference docs attached to "Tell the AI to revise" [{kind,name,media_type?,data?,text?}]
   let ACCOUNT = null;           // {balance, price:{premium,basic}} — prepaid meter (Phase 0 visual)
 
@@ -227,9 +232,10 @@
     CONFLICTS = conflicts;
     const overall = conf.overall!=null?conf.overall:0.7;
 
+    const _clean = function(a){ return arr(a).filter(function(x){ return String(x==null?"":x).trim(); }); };
     const streams = [
-      ["fab","Fabricate",arr(sw.fabricate)],["buy","Buyout",arr(sw.buyout)],
-      ["oth","By others",arr(sw.by_others)],["snd","Send-out",arr(sw.send_out)],
+      ["fab","Fabricate",_clean(sw.fabricate)],["buy","Buyout",_clean(sw.buyout)],
+      ["oth","By others",_clean(sw.by_others)],["snd","Send-out",_clean(sw.send_out)],
     ].filter(x=>x[2].length);
 
     const editable = BOM_EXPANDED;
@@ -295,12 +301,18 @@
           (gaps.length?'<span class="chip">◷ '+gaps.length+' gaps</span>':'')+
         '</div></div></div>'+
 
-      // scope
-      (streams.length?'<div class="card"><h2>▸ Scope of Work</h2><div class="body">'+
-        streams.map(([k,lbl,items])=>'<div class="stream"><div class="tag '+k+'">'+lbl+'</div>'+
-          '<div class="items">'+items.map(esc).join(" · ")+
-          (k==="buy"?' <span class="pillbtn" onclick="alert(\'Mock: builds the RFQ / outsource subform from these buyout items.\')">→ build RFQ</span>':'')+
-          '</div></div>').join("")+'</div></div>':'')+
+      // scope — view or edit (add/edit/remove the write-ups)
+      ((streams.length||SCOPE_EDIT)?'<div class="card"><h2>▸ Scope of Work'+
+        ' <span class="pillbtn" onclick="toggleScopeEdit()">'+(SCOPE_EDIT?'done':'edit')+'</span></h2><div class="body">'+
+        (SCOPE_EDIT
+          ? scopeEditHtml(sw)
+          : (streams.length
+              ? streams.map(([k,lbl,items])=>'<div class="stream"><div class="tag '+k+'">'+lbl+'</div>'+
+                  '<div class="items">'+items.map(esc).join(" · ")+
+                  (k==="buy"?' <span class="pillbtn" onclick="alert(\'Mock: builds the RFQ / outsource subform from these buyout items.\')">→ build RFQ</span>':'')+
+                  '</div></div>').join("")
+              : '<div style="color:var(--mut);font-size:13px">No scope items.</div>'))+
+        '</div></div>':'')+
 
       // decisions
       (DECISIONS.length?'<div class="card"><h2>⚠ Decisions — your call <span id="decCount" style="color:var(--ylw);font-weight:700;"></span></h2><div class="body" id="decisions"></div></div>':'')+
@@ -394,6 +406,30 @@
     const R=loadResult();
     if(R && R.synopsis && Array.isArray(R.synopsis.decisions) && R.synopsis.decisions[idx]){ R.synopsis.decisions[idx].selected=v; saveResult(R); }
   }
+  // ---- Scope of Work editor (deterministic add/edit/remove of write-ups; no AI) ----------
+  function ensureScope(R){ if(!R.synopsis) R.synopsis={}; if(!R.synopsis.scope_of_work) R.synopsis.scope_of_work={}; return R; }
+  function toggleScopeEdit(){ SCOPE_EDIT=!SCOPE_EDIT; render(); }
+  function scopeEditHtml(sw){
+    sw = sw||{};
+    return SCOPE_CATS.map(function(c){
+      const field=c[0], lbl=c[1], k=c[2];
+      const items=arr(sw[field]);
+      return '<div class="stream"><div class="tag '+k+'">'+lbl+'</div><div class="items">'+
+        items.map(function(it,i){
+          return '<div class="scoperow">'+
+            '<input class="scopeinput" value="'+escAttr(it)+'" placeholder="scope write-up…" onchange="scopeEdit(\''+field+'\','+i+',this.value)" />'+
+            '<button class="applybtn" style="background:#9aa6b2;padding:2px 8px" onclick="scopeRemove(\''+field+'\','+i+')" title="Remove">✕</button>'+
+          '</div>';
+        }).join("")+
+        '<button class="pillbtn" onclick="scopeAdd(\''+field+'\')">+ add to '+esc(lbl)+'</button>'+
+      '</div></div>';
+    }).join("");
+  }
+  function scopeEdit(field,i,val){ const R=ensureScope(loadResult()); const a=R.synopsis.scope_of_work[field]; if(Array.isArray(a)&&i>=0&&i<a.length){ a[i]=val; saveResult(R); } }
+  function scopeRemove(field,i){ const R=ensureScope(loadResult()); const a=R.synopsis.scope_of_work[field]; if(Array.isArray(a)&&i>=0&&i<a.length){ a.splice(i,1); saveResult(R); render(); } }
+  function scopeAdd(field){ const R=ensureScope(loadResult()); if(!Array.isArray(R.synopsis.scope_of_work[field])) R.synopsis.scope_of_work[field]=[]; R.synopsis.scope_of_work[field].push(""); saveResult(R); render();
+    const ins=document.querySelectorAll('.scoperow .scopeinput'); if(ins.length) ins[ins.length-1].focus(); }
+
   // Deterministic remove of a decision (local splice; no AI). idx is encoded in the "dec<i>" id.
   function dismissDecision(id){
     const idx=parseInt(String(id).replace("dec",""),10);
@@ -406,7 +442,7 @@
   // ---- BOM expand + inline edit ----------------------------------------------
   function toggleBom(){ BOM_EXPANDED=!BOM_EXPANDED; render(); }
   // Print the full package — expand the BOM first so every row is on the printout.
-  function printAll(){ BOM_EXPANDED=false; render(); setTimeout(function(){ window.print(); }, 200); }
+  function printAll(){ BOM_EXPANDED=false; SCOPE_EDIT=false; render(); setTimeout(function(){ window.print(); }, 200); }
 
   // ---- Add more drawings to THIS take-off (additive — merges, doesn't redo) ------------------
   function readB64(f){ return new Promise(function(res,rej){ const r=new FileReader(); r.onerror=function(){rej(new Error("read failed: "+f.name));}; r.onload=function(){ res(String(r.result).split(",")[1]); }; r.readAsDataURL(f); }); }
