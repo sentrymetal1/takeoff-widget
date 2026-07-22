@@ -121,7 +121,7 @@
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
-  const VERSION = "v0.34 · 2026-07-21";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.35 · 2026-07-21";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -241,13 +241,37 @@
       ? arr(PROJECT_SCOPE.components).map(function(c){return {id:c.id,name:String(c.name==null?"":c.name)};})
       : arr(PROJECT_SCOPE.drawings).map(function(d){return {id:d.id,name:String(d.number==null?"":d.number)};});
   }
-  function reconTakeoff(kind){   // distinct AI values from qty>0 rows → [{norm,value,rows}]
+  // What the AI read, from BOTH sources:
+  //   1. per-row `component` / `source_sheet` tags, and
+  //   2. the Scope of Work write-up, which pairs each assembly with its drawing:
+  //      "Lid Assembly (top, hinge side, …) – RIS-48300-S2 family"
+  // Source 2 matters because the synopsis is often populated when the per-row tags are not —
+  // reading only the rows reported "0 matched" while the answer sat in plain sight on the page.
+  const DRAW_RE=/\b[A-Za-z]{1,4}[0-9]*(?:-[A-Za-z0-9]+){2,}\b/g;
+  function scopeStreams(){
+    const sw=(loadResult().synopsis||{}).scope_of_work||{};
+    const fab=arr(sw.fabricate);
+    return { fab:fab, all:fab.concat(arr(sw.buyout),arr(sw.by_others),arr(sw.send_out)) };
+  }
+  function scopeComponents(){   // "Upper Frame weldment (W6x25 …) – RIS-…" → "Upper Frame weldment"
+    return scopeStreams().fab.map(function(l){
+      return String(l).split(/\s[–—-]\s/)[0].replace(/\s*\(.*$/,"").trim();
+    }).filter(Boolean);
+  }
+  function scopeDrawings(){     // every drawing-shaped token across all streams
+    const out=[];
+    scopeStreams().all.forEach(function(l){ (String(l).match(DRAW_RE)||[]).forEach(function(x){ out.push(x); }); });
+    return out;
+  }
+  function reconTakeoff(kind){   // distinct AI values → [{norm,value,rows,src}]
     const field=kind==='component'?'component':'source_sheet', map={};
-    arr(loadResult().rows).forEach(function(r){
-      if((Number(r.quantity)||0)<=0) return;
-      const raw=String(r[field]==null?"":r[field]).trim(); if(!raw) return;
-      const n=_norm(raw); if(!map[n]) map[n]={norm:n,value:raw,rows:0}; map[n].rows++;
-    });
+    const push=function(raw,fromRow){
+      const v=String(raw==null?"":raw).trim(); if(!v) return;
+      const n=_norm(v); if(!map[n]) map[n]={norm:n,value:v,rows:0,src:fromRow?'rows':'scope'};
+      if(fromRow){ map[n].rows++; map[n].src='rows'; }
+    };
+    arr(loadResult().rows).forEach(function(r){ if((Number(r.quantity)||0)>0) push(r[field],true); });
+    (kind==='component'?scopeComponents():scopeDrawings()).forEach(function(v){ push(v,false); });
     return Object.keys(map).map(function(n){return map[n];});
   }
   function reconState(){ return loadResult().__reconcile||{}; }
@@ -354,6 +378,22 @@
     if(failed.length) alert("Added "+(list.length-failed.length)+" of "+list.length+".\n\nFailed:\n"+failed.join("\n"));
   }
 
+  // Free-text rename straight from the "On your project" box — the one control that covers
+  // "change it to something neither side proposed".
+  async function reconRenameVal(kind,id,inputId){
+    const el=document.getElementById(inputId); if(!el) return;
+    const v=String(el.value||"").trim(); if(!v) return;
+    try{
+      const r=await fetch(RAILWAY_URL+"/api/takeoff/project-scope/update",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({kind:kind,id:id,value:v})});
+      const d=await r.json();
+      if(!r.ok||d.ok===false) throw new Error(d.error||("HTTP "+r.status));
+      const list=kind==='component'?arr(PROJECT_SCOPE.components):arr(PROJECT_SCOPE.drawings);
+      list.forEach(function(x){ if(String(x.id)===String(id)){ if(kind==='component') x.name=v; else x.number=v; } });
+      render();
+    }catch(e){ alert("Rename failed: "+e.message); }
+  }
+
   async function reconRenameIdx(kind,i){
     const p=RECON[kind]&&RECON[kind].near[i]; if(!p) return;
     if(!confirm('Rename "'+p.entered.name+'" to "'+p.takeoff.value+'" on the project?')) return;
@@ -394,7 +434,9 @@
   }
   function reconNoticeHtml(){
     const c=reconCoverage();
-    if(!c.rows || c.comp || c.sheet) return "";   // nothing loaded, or the take-off tagged something
+    // Only when BOTH sources are empty — the Scope of Work counts as the AI having read something.
+    if(!c.rows || c.comp || c.sheet) return "";
+    if(reconTakeoff('component').length || reconTakeoff('drawing').length) return "";
     let why;
     if(!c.hasKeys)      why='This saved result predates the component/drawing fields — <b>re-run the take-off</b> and it will tag rows as it reads them.';
     else if(!c.live)    why='All '+c.rows+' rows have a quantity of 0, and only rows with quantity &gt; 0 are read here — check the quantity column.';
@@ -409,36 +451,61 @@
     if(!SCOPE_FETCH_DONE) return '<div class="card"><h2>▸ Scope Reconciliation</h2><div class="body" style="color:var(--mut);font-size:13px"><span class="spin"></span> Checking components &amp; drawings against the project…</div></div>';
     if(!PROJECT_SCOPE || (!arr(PROJECT_SCOPE.components).length && !arr(PROJECT_SCOPE.drawings).length))
       return '<div class="card"><h2>▸ Scope Reconciliation</h2><div class="body" style="color:var(--mut);font-size:13px">No components or drawings are entered on this project — nothing to reconcile. (The BOM is grouped by what the AI read off the sheets.)</div></div>';
+    // One table per kind: what the AI read | what's on your project | what to do about it.
+    // Ordered actionable-first (≈ rename, ➕ add, ⚠ delete) with agreed rows last.
+    const TD='padding:5px 8px;border-bottom:1px solid #eceff3;vertical-align:top;font-size:12.5px';
+    const NAMEBOX=function(kind,id,val,idx,type){
+      const eid='sc_'+kind+'_'+type+'_'+idx;
+      return '<input id="'+eid+'" value="'+escAttr(val)+'" style="font-size:12px;padding:2px 5px;border:1px solid #cdd3da;border-radius:5px;width:96%;max-width:230px" '+
+        'onkeydown="if(event.key===\'Enter\'){reconRenameVal(\''+kind+'\',\''+escAttr(id)+'\',\''+eid+'\')}"> '+
+        '<button class="applybtn" style="background:#7d8aa0;padding:1px 7px" onclick="reconRenameVal(\''+kind+'\',\''+escAttr(id)+'\',\''+eid+'\')" title="Save this name to the project">save</button>';
+    };
     const sec=function(kind,label,noun){
       const r=reconcile(kind); RECON[kind]=r;
-      const entered=reconEntered(kind);
-      const optionsHtml=entered.map(function(e){return '<option value="'+escAttr(e.name)+'">'+esc(e.name)+'</option>';}).join("");
-      let body='';
-      r.matched.forEach(function(t){ body+='<div style="'+RECROW('#3a9d5d','#f4faf5')+'"><b style="color:#2f8049">✓</b> '+esc(t.value)+' <span class="src">→ '+t.rows+' row'+(t.rows===1?'':'s')+'</span></div>'; });
-      // ≈ near matches — deliberately NOT counted as matched. Renaming yours to the take-off's
-      // wording is what makes it a real match under the strict rule.
+      let rows='';
+      // ≈ near — NOT counted as matched; renaming one side is what makes the link real.
       r.near.forEach(function(p,i){
-        body+='<div style="'+RECROW('#8a6fc4','#f7f4fd')+'"><b style="color:#6b52a8">≈</b> '+esc(p.entered.name)+
-          ' <span class="src">yours</span> &nbsp;vs&nbsp; <b>'+esc(p.takeoff.value)+'</b> <span class="src">read from sheets ('+p.takeoff.rows+' row'+(p.takeoff.rows===1?'':'s')+') · will NOT link as-is</span><br style="line-height:1.9">'+
-          '<button class="applybtn" onclick="reconRenameIdx(\''+kind+'\','+i+')" title="Rename the project record to the take-off value">✎ rename mine to “'+escAttr(p.takeoff.value)+'”</button> '+
-          '<button class="applybtn" style="background:#7d8aa0" onclick="reconMapNearIdx(\''+kind+'\','+i+')" title="Keep your name — retag the BOM rows to it">keep mine, retag rows</button> '+
-          '<button class="applybtn" style="background:#9aa6b2;padding:1px 8px" onclick="reconUnpairIdx(\''+kind+'\','+i+')" title="These are different things">not the same</button></div>';
+        rows+='<tr><td style="'+TD+'"><b style="color:#6b52a8">≈</b> '+esc(p.takeoff.value)+'</td>'+
+          '<td style="'+TD+'">'+NAMEBOX(kind,p.entered.id,p.entered.name,i,'near')+'<div class="src">will not link until the names agree</div></td>'+
+          '<td style="'+TD+'; white-space:nowrap">'+
+            '<button class="applybtn" onclick="reconRenameIdx(\''+kind+'\','+i+')" title="Use the AI\'s wording">✎ use AI name</button> '+
+            '<button class="applybtn" style="background:#7d8aa0" onclick="reconMapNearIdx(\''+kind+'\','+i+')" title="Keep yours — retag the BOM rows">keep mine</button> '+
+            '<button class="applybtn" style="background:#9aa6b2;padding:1px 7px" onclick="reconUnpairIdx(\''+kind+'\','+i+')">not same</button></td></tr>';
       });
-      r.enteredOnly.forEach(function(e,i){ body+='<div style="'+RECROW('#d9a441','#fff9ef')+'"><b style="color:#b6791f">⚠</b> '+esc(e.name)+' <span class="src">entered · nothing read from the sheets</span><br style="line-height:1.9">'+
-        '<button class="applybtn" style="background:#b4544c" onclick="reconDeleteIdx(\''+kind+'\','+i+')" title="Delete this '+noun+' from the project">🗑 delete from project</button> '+
-        '<button class="applybtn" style="background:#9aa6b2;padding:1px 8px" onclick="reconAckIdx(\''+kind+'\','+i+')" title="Keep it — just not used in this take-off">keep · not used</button></div>'; });
+      // ➕ AI read it, not on the project
       r.takeoffOnly.forEach(function(t,i){
-        const dd = entered.length ? '<select onchange="reconMapIdx(\''+kind+'\','+i+',this)" style="font-size:11px;padding:2px 4px;border:1px solid #cdd3da;border-radius:5px;margin-right:4px"><option value="">map to…</option>'+optionsHtml+'</select>' : '';
-        body+='<div style="'+RECROW('#5F94CE','#f4f7fb')+'"><b style="color:#3a6ea5">➕</b> '+esc(t.value)+' <span class="src">read from sheets · not in your '+noun+' list ('+t.rows+' row'+(t.rows===1?'':'s')+')</span><br style="line-height:1.9">'+dd+
-          '<button class="applybtn" onclick="reconAddIdx(\''+kind+'\','+i+')" title="Create this '+noun+' on the project">＋ add to project</button> '+
-          '<button class="applybtn" style="background:#9aa6b2;padding:1px 8px" onclick="reconIgnoreIdx(\''+kind+'\','+i+')" title="Leave as-is">ignore</button></div>';
+        rows+='<tr><td style="'+TD+'"><b style="color:#3a6ea5">➕</b> '+esc(t.value)+
+            (t.rows?' <span class="src">'+t.rows+' row'+(t.rows===1?'':'s')+'</span>':' <span class="src">from scope of work</span>')+'</td>'+
+          '<td style="'+TD+'"><span class="src">not on the project</span></td>'+
+          '<td style="'+TD+'; white-space:nowrap">'+
+            '<button class="applybtn" onclick="reconAddIdx(\''+kind+'\','+i+')" title="Create this '+noun+' on the project">＋ add</button> '+
+            '<button class="applybtn" style="background:#9aa6b2;padding:1px 7px" onclick="reconIgnoreIdx(\''+kind+'\','+i+')">ignore</button></td></tr>';
       });
-      if(!body) body='<div class="src" style="padding:4px 0">All '+noun+'s line up. ✓</div>';
+      // ⚠ on the project, AI read nothing like it
+      r.enteredOnly.forEach(function(e,i){
+        rows+='<tr><td style="'+TD+'"><span class="src">nothing read from the sheets</span></td>'+
+          '<td style="'+TD+'"><b style="color:#b6791f">⚠</b> '+NAMEBOX(kind,e.id,e.name,i,'only')+'</td>'+
+          '<td style="'+TD+'; white-space:nowrap">'+
+            '<button class="applybtn" style="background:#b4544c" onclick="reconDeleteIdx(\''+kind+'\','+i+')" title="Delete from the project">🗑 delete</button> '+
+            '<button class="applybtn" style="background:#9aa6b2;padding:1px 7px" onclick="reconAckIdx(\''+kind+'\','+i+')">keep</button></td></tr>';
+      });
+      // ✓ agreed
+      r.matched.forEach(function(t){
+        rows+='<tr><td style="'+TD+';background:#f8fbf9"><b style="color:#2f8049">✓</b> '+esc(t.value)+'</td>'+
+          '<td style="'+TD+';background:#f8fbf9" colspan="2"><span class="src">matches'+(t.rows?' · '+t.rows+' row'+(t.rows===1?'':'s'):'')+'</span></td></tr>';
+      });
+      if(!rows) rows='<tr><td style="'+TD+'" colspan="3"><span class="src">All '+noun+'s line up. ✓</span></td></tr>';
       const bulk = r.takeoffOnly.length>1
         ? ' <button class="applybtn" style="padding:1px 8px" onclick="reconAddAll(\''+kind+'\')" title="Create all of these on the project">＋ add all '+r.takeoffOnly.length+'</button>'
         : '';
-      const hdr=label+' <span class="grp-meta">'+r.enteredTotal+' entered · '+r.matched.length+' matched'+(r.near.length?' · '+r.near.length+' near':'')+(r.takeoffOnly.length?' · '+r.takeoffOnly.length+' unlisted':'')+(r.enteredOnly.length?' · '+r.enteredOnly.length+' unused':'')+'</span>'+bulk;
-      return '<div style="margin-bottom:8px"><div style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#667;margin:2px 0 6px">'+hdr+'</div>'+body+'</div>';
+      const hdr=label+' <span class="grp-meta">'+r.matched.length+' agree'+(r.near.length?' · '+r.near.length+' to rename':'')+(r.takeoffOnly.length?' · '+r.takeoffOnly.length+' to add':'')+(r.enteredOnly.length?' · '+r.enteredOnly.length+' unmatched':'')+'</span>'+bulk;
+      return '<div style="margin-bottom:14px"><div style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#667;margin:2px 0 6px">'+hdr+'</div>'+
+        '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">'+
+        '<thead><tr>'+
+          '<th style="'+TD+';text-align:left;color:#667;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;width:38%">AI read from sheets</th>'+
+          '<th style="'+TD+';text-align:left;color:#667;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;width:34%">On your project</th>'+
+          '<th style="'+TD+';text-align:left;color:#667;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em">Action</th>'+
+        '</tr></thead><tbody>'+rows+'</tbody></table></div></div>';
     };
     return '<div class="card"><h2>▸ Scope Reconciliation <span class="lt">— what the AI read vs. what you entered</span></h2><div class="body">'+
       reconNoticeHtml()+
