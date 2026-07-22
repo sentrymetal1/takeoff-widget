@@ -121,7 +121,7 @@
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
-  const VERSION = "v0.31 · 2026-06-03";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.32 · 2026-07-21";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -214,6 +214,108 @@
   let SCOPE_EDIT = false;    // Scope of Work: edit mode (add/edit/remove write-ups)
   let REVISE_ATTACHMENTS = [];  // reference docs attached to "Tell the AI to revise" [{kind,name,media_type?,data?,text?}]
   let ACCOUNT = null;           // {balance, price:{premium,basic}} — prepaid meter (Phase 0 visual)
+  let PROJECT_SCOPE = null;     // {components:[{id,name}], drawings:[{id,number}]} from Zoho; null until fetched
+  let SCOPE_FETCH_DONE = false; // true once the project-scope fetch resolves (distinguish "loading" from "none entered")
+  let RECON = { component:null, drawing:null };  // last reconcile() result per kind; index-keyed action handlers read this
+
+  // ===== SCOPE RECONCILIATION =================================================
+  // Compare what the AI READ (r.component / r.source_sheet) vs. the project's
+  // ENTERED components & drawings. Match rule MIRRORS the staging validator
+  // (entered-name CONTAINS take-off value, normalized) so this previews what
+  // staging will actually resolve. Every fix rewrites r.* → flows into the commit CSV.
+  const _norm  = (s)=>String(s==null?"":s).toLowerCase().trim().replace(/\s+/g," ");
+  const RECROW = (bd,bg)=>'padding:5px 9px;border-left:3px solid '+bd+';background:'+bg+';border-radius:4px;margin:4px 0;font-size:12.5px';
+
+  async function fetchProjectScope(){
+    if(!params.project_id || loadResult().__demo){ SCOPE_FETCH_DONE=true; return; }
+    try{
+      const r=await fetch(RAILWAY_URL+"/api/takeoff/project-scope/"+encodeURIComponent(params.project_id));
+      const d=await r.json();
+      if(d&&d.ok){ PROJECT_SCOPE={components:arr(d.components),drawings:arr(d.drawings)}; }
+    }catch(e){ /* non-fatal — panel shows a soft notice */ }
+    SCOPE_FETCH_DONE=true; render();
+  }
+  function reconEntered(kind){
+    if(!PROJECT_SCOPE) return [];
+    return kind==='component'
+      ? arr(PROJECT_SCOPE.components).map(function(c){return {id:c.id,name:String(c.name==null?"":c.name)};})
+      : arr(PROJECT_SCOPE.drawings).map(function(d){return {id:d.id,name:String(d.number==null?"":d.number)};});
+  }
+  function reconTakeoff(kind){   // distinct AI values from qty>0 rows → [{norm,value,rows}]
+    const field=kind==='component'?'component':'source_sheet', map={};
+    arr(loadResult().rows).forEach(function(r){
+      if((Number(r.quantity)||0)<=0) return;
+      const raw=String(r[field]==null?"":r[field]).trim(); if(!raw) return;
+      const n=_norm(raw); if(!map[n]) map[n]={norm:n,value:raw,rows:0}; map[n].rows++;
+    });
+    return Object.keys(map).map(function(n){return map[n];});
+  }
+  function reconState(){ return loadResult().__reconcile||{}; }
+  function reconSet(mut){ const R=loadResult(); R.__reconcile=R.__reconcile||{ignored:{component:[],drawing:[]},acked:{component:[],drawing:[]}}; mut(R.__reconcile); saveResult(R); render(); }
+  function reconcile(kind){
+    const entered=reconEntered(kind).map(function(e){return {e:e,n:_norm(e.name)};}).filter(function(x){return x.n;});
+    const takeoff=reconTakeoff(kind);
+    const rc=reconState(), ign=arr(rc.ignored&&rc.ignored[kind]), ack=arr(rc.acked&&rc.acked[kind]);
+    const hit=function(en,tn){ return en===tn || en.indexOf(tn)>-1; };  // entered CONTAINS take-off (validator rule)
+    const matched=[], takeoffOnly=[];
+    takeoff.forEach(function(t){
+      if(entered.some(function(x){return hit(x.n,t.norm);})) matched.push(t);
+      else if(ign.indexOf(t.norm)<0) takeoffOnly.push(t);
+    });
+    const enteredOnly=entered.filter(function(x){ return !takeoff.some(function(t){return hit(x.n,t.norm);}) && ack.indexOf(x.n)<0; }).map(function(x){return x.e;});
+    return {enteredTotal:entered.length, matched:matched, takeoffOnly:takeoffOnly, enteredOnly:enteredOnly};
+  }
+  // ---- actions (index-keyed so no raw strings ride inside onclick attributes) ----
+  function reconMap(kind,fromNorm,toName){
+    if(!toName) return;
+    const field=kind==='component'?'component':'source_sheet', R=loadResult();
+    arr(R.rows).forEach(function(r){ if(_norm(r[field])===fromNorm) r[field]=toName; });
+    saveResult(R); render();
+  }
+  function reconMapIdx(kind,i,sel){ const t=RECON[kind]&&RECON[kind].takeoffOnly[i]; if(t) reconMap(kind,t.norm,sel.value); }
+  function reconIgnoreIdx(kind,i){ const t=RECON[kind]&&RECON[kind].takeoffOnly[i]; if(t) reconSet(function(rc){ rc.ignored=rc.ignored||{}; rc.ignored[kind]=arr(rc.ignored[kind]).concat([t.norm]); }); }
+  function reconAckIdx(kind,i){ const e=RECON[kind]&&RECON[kind].enteredOnly[i]; if(e) reconSet(function(rc){ rc.acked=rc.acked||{}; rc.acked[kind]=arr(rc.acked[kind]).concat([_norm(e.name)]); }); }
+  async function reconAddIdx(kind,i){
+    const t=RECON[kind]&&RECON[kind].takeoffOnly[i]; if(!t) return;
+    if(!params.project_id){ alert("No project_id — can't add to project."); return; }
+    try{
+      const r=await fetch(RAILWAY_URL+"/api/takeoff/project-scope/add",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({project_id:params.project_id,kind:kind,value:t.value})});
+      const d=await r.json();
+      if(!r.ok||d.ok===false) throw new Error(d.error||("HTTP "+r.status));
+      PROJECT_SCOPE=PROJECT_SCOPE||{components:[],drawings:[]};
+      if(kind==='component') PROJECT_SCOPE.components.push({id:d.id,name:t.value});
+      else PROJECT_SCOPE.drawings.push({id:d.id,number:t.value});
+      render();
+    }catch(e){ alert("Add to project failed: "+e.message); }
+  }
+  function reconCardHtml(){
+    if(!params.project_id || loadResult().__demo) return "";
+    if(!SCOPE_FETCH_DONE) return '<div class="card"><h2>▸ Scope Reconciliation</h2><div class="body" style="color:var(--mut);font-size:13px"><span class="spin"></span> Checking components &amp; drawings against the project…</div></div>';
+    if(!PROJECT_SCOPE || (!arr(PROJECT_SCOPE.components).length && !arr(PROJECT_SCOPE.drawings).length))
+      return '<div class="card"><h2>▸ Scope Reconciliation</h2><div class="body" style="color:var(--mut);font-size:13px">No components or drawings are entered on this project — nothing to reconcile. (The BOM is grouped by what the AI read off the sheets.)</div></div>';
+    const sec=function(kind,label,noun){
+      const r=reconcile(kind); RECON[kind]=r;
+      const entered=reconEntered(kind);
+      const optionsHtml=entered.map(function(e){return '<option value="'+escAttr(e.name)+'">'+esc(e.name)+'</option>';}).join("");
+      let body='';
+      r.matched.forEach(function(t){ body+='<div style="'+RECROW('#3a9d5d','#f4faf5')+'"><b style="color:#2f8049">✓</b> '+esc(t.value)+' <span class="src">→ '+t.rows+' row'+(t.rows===1?'':'s')+'</span></div>'; });
+      r.enteredOnly.forEach(function(e,i){ body+='<div style="'+RECROW('#d9a441','#fff9ef')+'"><b style="color:#b6791f">⚠</b> '+esc(e.name)+' <span class="src">entered · nothing read from the sheets</span> <button class="applybtn" style="background:#9aa6b2;padding:1px 8px" onclick="reconAckIdx(\''+kind+'\','+i+')" title="Acknowledge — not used in this take-off">not used</button></div>'; });
+      r.takeoffOnly.forEach(function(t,i){
+        const dd = entered.length ? '<select onchange="reconMapIdx(\''+kind+'\','+i+',this)" style="font-size:11px;padding:2px 4px;border:1px solid #cdd3da;border-radius:5px;margin-right:4px"><option value="">map to…</option>'+optionsHtml+'</select>' : '';
+        body+='<div style="'+RECROW('#5F94CE','#f4f7fb')+'"><b style="color:#3a6ea5">➕</b> '+esc(t.value)+' <span class="src">read from sheets · not in your '+noun+' list ('+t.rows+' row'+(t.rows===1?'':'s')+')</span><br style="line-height:1.9">'+dd+
+          '<button class="applybtn" onclick="reconAddIdx(\''+kind+'\','+i+')" title="Create this '+noun+' on the project">＋ add to project</button> '+
+          '<button class="applybtn" style="background:#9aa6b2;padding:1px 8px" onclick="reconIgnoreIdx(\''+kind+'\','+i+')" title="Leave as-is">ignore</button></div>';
+      });
+      if(!body) body='<div class="src" style="padding:4px 0">All '+noun+'s line up. ✓</div>';
+      const hdr=label+' <span class="grp-meta">'+r.enteredTotal+' entered · '+r.matched.length+' matched'+(r.takeoffOnly.length?' · '+r.takeoffOnly.length+' unlisted':'')+(r.enteredOnly.length?' · '+r.enteredOnly.length+' unused':'')+'</span>';
+      return '<div style="margin-bottom:8px"><div style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#667;margin:2px 0 6px">'+hdr+'</div>'+body+'</div>';
+    };
+    return '<div class="card"><h2>▸ Scope Reconciliation <span class="lt">— what the AI read vs. what you entered</span></h2><div class="body">'+
+      sec('component','Components','component')+sec('drawing','Drawings','drawing')+
+      '<div class="src" style="margin-top:6px">➕ items import with a blank link unless you <b>map</b> them to an entered value or <b>add</b> them to the project. Fixes here update the BOM before it commits.</div>'+
+      '</div></div>';
+  }
 
   function render(){
     const _aiKeep = (document.getElementById("aiInput")||{}).value;  // preserve in-progress chat text across re-render
@@ -312,6 +414,9 @@
                   '</div></div>').join("")
               : '<div style="color:var(--mut);font-size:13px">No scope items.</div>'))+
         '</div></div>':'')+
+
+      // scope reconciliation — AI-read components/drawings vs. what you entered on the project
+      reconCardHtml()+
 
       // decisions
       (DECISIONS.length?'<div class="card"><h2>⚠ Decisions — your call <span id="decCount" style="color:var(--ylw);font-weight:700;"></span></h2><div class="body" id="decisions"></div></div>':'')+
@@ -757,6 +862,15 @@
 
   async function approve(){
     const R=loadResult();
+    // Soft-gate: if the drawings reference components not on the project, they'll import with a
+    // blank Component link. Warn (don't block) — mirrors the "your call" decisions philosophy.
+    if(!R.__demo && params.project_id && PROJECT_SCOPE){
+      const un=reconcile('component').takeoffOnly;
+      if(un.length){
+        const names=un.slice(0,6).map(function(t){return "• "+t.value;}).join("\n")+(un.length>6?"\n…":"");
+        if(!confirm(un.length+" component"+(un.length===1?"":"s")+" the drawings reference aren't on your project:\n\n"+names+"\n\nTheir material will import without a component link. Map or add them first, or continue anyway?")) return;
+      }
+    }
     const ap=document.getElementById("approve"); ap.disabled=true;
     const c=document.getElementById("commit"); c.style.display="block";
     const picks=DECISIONS.map(d=>'• '+esc(d.item)+'  →  <b>'+esc(d.sel)+'</b>').join("<br>")||"(none)";
@@ -845,6 +959,7 @@
   (async function init(){
     render();                                  // show local/sample immediately
     fetchAccount();                            // prepaid balance for the green bar (Phase 0 visual)
+    fetchProjectScope();                       // entered components/drawings for the reconciliation panel
     if(haveLive()){
       scheduleZohoSave();                      // persist the freshly-arrived take-off to the project
     } else if(params.project_id){
