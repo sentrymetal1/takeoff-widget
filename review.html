@@ -121,7 +121,7 @@
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
-  const VERSION = "v0.32 · 2026-07-21";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.33 · 2026-07-21";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -251,19 +251,54 @@
     return Object.keys(map).map(function(n){return map[n];});
   }
   function reconState(){ return loadResult().__reconcile||{}; }
-  function reconSet(mut){ const R=loadResult(); R.__reconcile=R.__reconcile||{ignored:{component:[],drawing:[]},acked:{component:[],drawing:[]}}; mut(R.__reconcile); saveResult(R); render(); }
+  function reconSet(mut){ const R=loadResult(); R.__reconcile=R.__reconcile||{ignored:{component:[],drawing:[]},acked:{component:[],drawing:[]},unpaired:{component:[],drawing:[]}}; mut(R.__reconcile); saveResult(R); render(); }
+
+  // ---- near-match (≈) --------------------------------------------------------
+  // A near match is a SUGGESTION TO RENAME, never a match. The strict rule below stays
+  // byte-identical to the staging validator, so the panel can never show a green ✓ for a link
+  // that then imports blank. Renaming the entered value to the take-off's exact wording is what
+  // turns the pair into a real match — which also means the validator needs no change.
+  // Prime case: the REVERSE of the strict rule — take-off "Upper Frame weldment" contains
+  // entered "Upper Frame". The strict rule misses it; a rename fixes it for good.
+  function _tok(s){ return _norm(s).split(/[^a-z0-9]+/).filter(Boolean); }
+  function _sim(a,b){
+    const A=_tok(a), B=_tok(b).slice(); if(!A.length||!B.length) return 0;
+    let hit=0; A.forEach(function(t){ const i=B.indexOf(t); if(i>-1){ hit++; B.splice(i,1); } });
+    return hit/Math.max(A.length,_tok(b).length);
+  }
+  function _near(en,tn){ return tn.indexOf(en)>-1 || _sim(en,tn)>=0.5; }
+
   function reconcile(kind){
     const entered=reconEntered(kind).map(function(e){return {e:e,n:_norm(e.name)};}).filter(function(x){return x.n;});
     const takeoff=reconTakeoff(kind);
-    const rc=reconState(), ign=arr(rc.ignored&&rc.ignored[kind]), ack=arr(rc.acked&&rc.acked[kind]);
+    const rc=reconState(), ign=arr(rc.ignored&&rc.ignored[kind]), ack=arr(rc.acked&&rc.acked[kind]),
+          unp=arr(rc.unpaired&&rc.unpaired[kind]);
     const hit=function(en,tn){ return en===tn || en.indexOf(tn)>-1; };  // entered CONTAINS take-off (validator rule)
     const matched=[], takeoffOnly=[];
     takeoff.forEach(function(t){
       if(entered.some(function(x){return hit(x.n,t.norm);})) matched.push(t);
       else if(ign.indexOf(t.norm)<0) takeoffOnly.push(t);
     });
-    const enteredOnly=entered.filter(function(x){ return !takeoff.some(function(t){return hit(x.n,t.norm);}) && ack.indexOf(x.n)<0; }).map(function(x){return x.e;});
-    return {enteredTotal:entered.length, matched:matched, takeoffOnly:takeoffOnly, enteredOnly:enteredOnly};
+    let enteredOnly=entered.filter(function(x){ return !takeoff.some(function(t){return hit(x.n,t.norm);}) && ack.indexOf(x.n)<0; }).map(function(x){return x.e;});
+
+    // Greedy best-score pairing across the two leftover lists. Each side is consumed at most once,
+    // and anything you flag "not the same" is skipped so it falls back to its own section.
+    const near=[], usedT={}, usedE={};
+    enteredOnly.forEach(function(e){
+      if(unp.indexOf(_norm(e.name))>-1) return;
+      let best=null, bestScore=0;
+      takeoffOnly.forEach(function(t,ti){
+        if(usedT[ti] || !_near(_norm(e.name),t.norm)) return;
+        const s=_sim(_norm(e.name),t.norm);
+        if(s>=bestScore){ bestScore=s; best=ti; }
+      });
+      if(best!==null){ usedT[best]=1; usedE[_norm(e.name)]=1; near.push({entered:e, takeoff:takeoffOnly[best]}); }
+    });
+    return {
+      enteredTotal:entered.length, matched:matched, near:near,
+      takeoffOnly:takeoffOnly.filter(function(t,ti){ return !usedT[ti]; }),
+      enteredOnly:enteredOnly.filter(function(e){ return !usedE[_norm(e.name)]; }),
+    };
   }
   // ---- actions (index-keyed so no raw strings ride inside onclick attributes) ----
   function reconMap(kind,fromNorm,toName){
@@ -275,19 +310,77 @@
   function reconMapIdx(kind,i,sel){ const t=RECON[kind]&&RECON[kind].takeoffOnly[i]; if(t) reconMap(kind,t.norm,sel.value); }
   function reconIgnoreIdx(kind,i){ const t=RECON[kind]&&RECON[kind].takeoffOnly[i]; if(t) reconSet(function(rc){ rc.ignored=rc.ignored||{}; rc.ignored[kind]=arr(rc.ignored[kind]).concat([t.norm]); }); }
   function reconAckIdx(kind,i){ const e=RECON[kind]&&RECON[kind].enteredOnly[i]; if(e) reconSet(function(rc){ rc.acked=rc.acked||{}; rc.acked[kind]=arr(rc.acked[kind]).concat([_norm(e.name)]); }); }
+  function reconUnpairIdx(kind,i){ const p=RECON[kind]&&RECON[kind].near[i]; if(p) reconSet(function(rc){ rc.unpaired=rc.unpaired||{}; rc.unpaired[kind]=arr(rc.unpaired[kind]).concat([_norm(p.entered.name)]); }); }
+  function reconMapNearIdx(kind,i){ const p=RECON[kind]&&RECON[kind].near[i]; if(p) reconMap(kind,p.takeoff.norm,p.entered.name); }
+
+  // The drawing's parent component, resolved from the take-off itself: find a row on this sheet
+  // that names a component, then match that name to an entered component record. Without this the
+  // new drawing lands on the project unattached to any component.
+  function reconParentComponentId(sheetValue){
+    const sn=_norm(sheetValue); let compName="";
+    arr(loadResult().rows).some(function(r){
+      if(_norm(r.source_sheet)===sn && String(r.component||"").trim()){ compName=_norm(r.component); return true; }
+      return false;
+    });
+    if(!compName) return "";
+    const c=reconEntered('component').filter(function(x){ const n=_norm(x.name); return n===compName||n.indexOf(compName)>-1||compName.indexOf(n)>-1; })[0];
+    return c?c.id:"";
+  }
+
+  async function reconAdd(kind,value){
+    if(!params.project_id) throw new Error("No project_id — can't add to project.");
+    const body={project_id:params.project_id,kind:kind,value:value};
+    if(kind==='drawing'){ const cid=reconParentComponentId(value); if(cid) body.component_id=cid; }
+    const r=await fetch(RAILWAY_URL+"/api/takeoff/project-scope/add",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const d=await r.json();
+    if(!r.ok||d.ok===false) throw new Error(d.error||("HTTP "+r.status));
+    PROJECT_SCOPE=PROJECT_SCOPE||{components:[],drawings:[]};
+    if(kind==='component') PROJECT_SCOPE.components.push({id:d.id,name:value});
+    else PROJECT_SCOPE.drawings.push({id:d.id,number:value});
+    return d.id;
+  }
   async function reconAddIdx(kind,i){
     const t=RECON[kind]&&RECON[kind].takeoffOnly[i]; if(!t) return;
-    if(!params.project_id){ alert("No project_id — can't add to project."); return; }
+    try{ await reconAdd(kind,t.value); render(); }
+    catch(e){ alert("Add to project failed: "+e.message); }
+  }
+  // Bulk add only. Components go first so drawings can attach to the records just created.
+  async function reconAddAll(kind){
+    const list=(RECON[kind]&&RECON[kind].takeoffOnly||[]).slice(); if(!list.length) return;
+    if(!confirm("Add "+list.length+" "+kind+(list.length===1?"":"s")+" to the project?")) return;
+    const failed=[];
+    for(let i=0;i<list.length;i++){ try{ await reconAdd(kind,list[i].value); }catch(e){ failed.push(list[i].value+" — "+e.message); } }
+    render();
+    if(failed.length) alert("Added "+(list.length-failed.length)+" of "+list.length+".\n\nFailed:\n"+failed.join("\n"));
+  }
+
+  async function reconRenameIdx(kind,i){
+    const p=RECON[kind]&&RECON[kind].near[i]; if(!p) return;
+    if(!confirm('Rename "'+p.entered.name+'" to "'+p.takeoff.value+'" on the project?')) return;
     try{
-      const r=await fetch(RAILWAY_URL+"/api/takeoff/project-scope/add",{method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({project_id:params.project_id,kind:kind,value:t.value})});
+      const r=await fetch(RAILWAY_URL+"/api/takeoff/project-scope/update",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({kind:kind,id:p.entered.id,value:p.takeoff.value})});
       const d=await r.json();
       if(!r.ok||d.ok===false) throw new Error(d.error||("HTTP "+r.status));
-      PROJECT_SCOPE=PROJECT_SCOPE||{components:[],drawings:[]};
-      if(kind==='component') PROJECT_SCOPE.components.push({id:d.id,name:t.value});
-      else PROJECT_SCOPE.drawings.push({id:d.id,number:t.value});
+      const list=kind==='component'?arr(PROJECT_SCOPE.components):arr(PROJECT_SCOPE.drawings);
+      list.forEach(function(x){ if(String(x.id)===String(p.entered.id)){ if(kind==='component') x.name=p.takeoff.value; else x.number=p.takeoff.value; } });
       render();
-    }catch(e){ alert("Add to project failed: "+e.message); }
+    }catch(e){ alert("Rename failed: "+e.message); }
+  }
+
+  async function reconDeleteIdx(kind,i){
+    const e=RECON[kind]&&RECON[kind].enteredOnly[i]; if(!e) return;
+    if(!confirm('Delete "'+e.name+'" from the project?\n\nThis removes the record in Zoho. It is blocked if anything is still linked to it.')) return;
+    try{
+      const r=await fetch(RAILWAY_URL+"/api/takeoff/project-scope/delete",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({kind:kind,id:e.id})});
+      const d=await r.json();
+      if(r.status===409){ alert("Can't delete \""+e.name+"\".\n\n"+d.error); return; }
+      if(!r.ok||d.ok===false) throw new Error(d.error||("HTTP "+r.status));
+      if(kind==='component') PROJECT_SCOPE.components=arr(PROJECT_SCOPE.components).filter(function(x){return String(x.id)!==String(e.id);});
+      else PROJECT_SCOPE.drawings=arr(PROJECT_SCOPE.drawings).filter(function(x){return String(x.id)!==String(e.id);});
+      render();
+    }catch(e2){ alert("Delete failed: "+e2.message); }
   }
   function reconCardHtml(){
     if(!params.project_id || loadResult().__demo) return "";
@@ -300,7 +393,18 @@
       const optionsHtml=entered.map(function(e){return '<option value="'+escAttr(e.name)+'">'+esc(e.name)+'</option>';}).join("");
       let body='';
       r.matched.forEach(function(t){ body+='<div style="'+RECROW('#3a9d5d','#f4faf5')+'"><b style="color:#2f8049">✓</b> '+esc(t.value)+' <span class="src">→ '+t.rows+' row'+(t.rows===1?'':'s')+'</span></div>'; });
-      r.enteredOnly.forEach(function(e,i){ body+='<div style="'+RECROW('#d9a441','#fff9ef')+'"><b style="color:#b6791f">⚠</b> '+esc(e.name)+' <span class="src">entered · nothing read from the sheets</span> <button class="applybtn" style="background:#9aa6b2;padding:1px 8px" onclick="reconAckIdx(\''+kind+'\','+i+')" title="Acknowledge — not used in this take-off">not used</button></div>'; });
+      // ≈ near matches — deliberately NOT counted as matched. Renaming yours to the take-off's
+      // wording is what makes it a real match under the strict rule.
+      r.near.forEach(function(p,i){
+        body+='<div style="'+RECROW('#8a6fc4','#f7f4fd')+'"><b style="color:#6b52a8">≈</b> '+esc(p.entered.name)+
+          ' <span class="src">yours</span> &nbsp;vs&nbsp; <b>'+esc(p.takeoff.value)+'</b> <span class="src">read from sheets ('+p.takeoff.rows+' row'+(p.takeoff.rows===1?'':'s')+') · will NOT link as-is</span><br style="line-height:1.9">'+
+          '<button class="applybtn" onclick="reconRenameIdx(\''+kind+'\','+i+')" title="Rename the project record to the take-off value">✎ rename mine to “'+escAttr(p.takeoff.value)+'”</button> '+
+          '<button class="applybtn" style="background:#7d8aa0" onclick="reconMapNearIdx(\''+kind+'\','+i+')" title="Keep your name — retag the BOM rows to it">keep mine, retag rows</button> '+
+          '<button class="applybtn" style="background:#9aa6b2;padding:1px 8px" onclick="reconUnpairIdx(\''+kind+'\','+i+')" title="These are different things">not the same</button></div>';
+      });
+      r.enteredOnly.forEach(function(e,i){ body+='<div style="'+RECROW('#d9a441','#fff9ef')+'"><b style="color:#b6791f">⚠</b> '+esc(e.name)+' <span class="src">entered · nothing read from the sheets</span><br style="line-height:1.9">'+
+        '<button class="applybtn" style="background:#b4544c" onclick="reconDeleteIdx(\''+kind+'\','+i+')" title="Delete this '+noun+' from the project">🗑 delete from project</button> '+
+        '<button class="applybtn" style="background:#9aa6b2;padding:1px 8px" onclick="reconAckIdx(\''+kind+'\','+i+')" title="Keep it — just not used in this take-off">keep · not used</button></div>'; });
       r.takeoffOnly.forEach(function(t,i){
         const dd = entered.length ? '<select onchange="reconMapIdx(\''+kind+'\','+i+',this)" style="font-size:11px;padding:2px 4px;border:1px solid #cdd3da;border-radius:5px;margin-right:4px"><option value="">map to…</option>'+optionsHtml+'</select>' : '';
         body+='<div style="'+RECROW('#5F94CE','#f4f7fb')+'"><b style="color:#3a6ea5">➕</b> '+esc(t.value)+' <span class="src">read from sheets · not in your '+noun+' list ('+t.rows+' row'+(t.rows===1?'':'s')+')</span><br style="line-height:1.9">'+dd+
@@ -308,12 +412,15 @@
           '<button class="applybtn" style="background:#9aa6b2;padding:1px 8px" onclick="reconIgnoreIdx(\''+kind+'\','+i+')" title="Leave as-is">ignore</button></div>';
       });
       if(!body) body='<div class="src" style="padding:4px 0">All '+noun+'s line up. ✓</div>';
-      const hdr=label+' <span class="grp-meta">'+r.enteredTotal+' entered · '+r.matched.length+' matched'+(r.takeoffOnly.length?' · '+r.takeoffOnly.length+' unlisted':'')+(r.enteredOnly.length?' · '+r.enteredOnly.length+' unused':'')+'</span>';
+      const bulk = r.takeoffOnly.length>1
+        ? ' <button class="applybtn" style="padding:1px 8px" onclick="reconAddAll(\''+kind+'\')" title="Create all of these on the project">＋ add all '+r.takeoffOnly.length+'</button>'
+        : '';
+      const hdr=label+' <span class="grp-meta">'+r.enteredTotal+' entered · '+r.matched.length+' matched'+(r.near.length?' · '+r.near.length+' near':'')+(r.takeoffOnly.length?' · '+r.takeoffOnly.length+' unlisted':'')+(r.enteredOnly.length?' · '+r.enteredOnly.length+' unused':'')+'</span>'+bulk;
       return '<div style="margin-bottom:8px"><div style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#667;margin:2px 0 6px">'+hdr+'</div>'+body+'</div>';
     };
     return '<div class="card"><h2>▸ Scope Reconciliation <span class="lt">— what the AI read vs. what you entered</span></h2><div class="body">'+
       sec('component','Components','component')+sec('drawing','Drawings','drawing')+
-      '<div class="src" style="margin-top:6px">➕ items import with a blank link unless you <b>map</b> them to an entered value or <b>add</b> them to the project. Fixes here update the BOM before it commits.</div>'+
+      '<div class="src" style="margin-top:6px">➕ items import with a blank link unless you <b>add</b> them to the project or <b>map</b> them to an entered value. ≈ near matches will <b>not</b> link until you rename one side. 🗑 delete is blocked while drawings or BOM rows are still linked. Fixes here update the BOM before it commits.</div>'+
       '</div></div>';
   }
 
