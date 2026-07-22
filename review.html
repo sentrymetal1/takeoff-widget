@@ -121,7 +121,7 @@
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
-  const VERSION = "v0.35 · 2026-07-21";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.36 · 2026-07-21";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -263,6 +263,17 @@
     scopeStreams().all.forEach(function(l){ (String(l).match(DRAW_RE)||[]).forEach(function(x){ out.push(x); }); });
     return out;
   }
+  // drawing → parent component, straight off the scope line that names both:
+  //   "Upper Frame weldment (W6x25 …) – RIS-48300-S1-A-1"  →  {ris-48300-s1-a-1: "Upper Frame weldment"}
+  function scopeDrawingParent(){
+    const map={};
+    scopeStreams().fab.forEach(function(l){
+      const s=String(l), name=s.split(/\s[–—-]\s/)[0].replace(/\s*\(.*$/,"").trim();
+      if(!name) return;
+      (s.match(DRAW_RE)||[]).forEach(function(d){ map[_norm(d)]=name; });
+    });
+    return map;
+  }
   function reconTakeoff(kind){   // distinct AI values → [{norm,value,rows,src}]
     const field=kind==='component'?'component':'source_sheet', map={};
     const push=function(raw,fromRow){
@@ -333,6 +344,21 @@
   }
   function reconMapIdx(kind,i,sel){ const t=RECON[kind]&&RECON[kind].takeoffOnly[i]; if(t) reconMap(kind,t.norm,sel.value); }
   function reconIgnoreIdx(kind,i){ const t=RECON[kind]&&RECON[kind].takeoffOnly[i]; if(t) reconSet(function(rc){ rc.ignored=rc.ignored||{}; rc.ignored[kind]=arr(rc.ignored[kind]).concat([t.norm]); }); }
+  // Dismissals must be undoable — an ignored item was otherwise hidden for good, with no way back
+  // short of clearing localStorage.
+  function reconUnignoreIdx(kind,i){ reconSet(function(rc){ rc.ignored=rc.ignored||{}; rc.ignored[kind]=arr(rc.ignored[kind]).filter(function(_,j){return j!==i;}); }); }
+  function reconUnackIdx(kind,i){ reconSet(function(rc){ rc.acked=rc.acked||{}; rc.acked[kind]=arr(rc.acked[kind]).filter(function(_,j){return j!==i;}); }); }
+  function reconDismissedHtml(kind){
+    const rc=reconState(), ign=arr(rc.ignored&&rc.ignored[kind]), ack=arr(rc.acked&&rc.acked[kind]);
+    if(!ign.length && !ack.length) return "";
+    const label={}; reconTakeoff(kind).forEach(function(t){ label[t.norm]=t.value; });
+    reconEntered(kind).forEach(function(e){ label[_norm(e.name)]=e.name; });
+    const chip=function(n,i,fn){ return '<span style="display:inline-block;background:#eef1f5;border-radius:10px;padding:1px 4px 1px 8px;margin:2px 4px 2px 0">'+
+      esc(label[n]||n)+' <button class="applybtn" style="background:#9aa6b2;padding:0 6px" onclick="'+fn+'(\''+kind+'\','+i+')" title="Show this again">undo</button></span>'; };
+    return '<div class="src" style="margin:2px 0 4px">Dismissed: '+
+      ign.map(function(n,i){return chip(n,i,'reconUnignoreIdx');}).join("")+
+      ack.map(function(n,i){return chip(n,i,'reconUnackIdx');}).join("")+'</div>';
+  }
   function reconAckIdx(kind,i){ const e=RECON[kind]&&RECON[kind].enteredOnly[i]; if(e) reconSet(function(rc){ rc.acked=rc.acked||{}; rc.acked[kind]=arr(rc.acked[kind]).concat([_norm(e.name)]); }); }
   function reconUnpairIdx(kind,i){ const p=RECON[kind]&&RECON[kind].near[i]; if(p) reconSet(function(rc){ rc.unpaired=rc.unpaired||{}; rc.unpaired[kind]=arr(rc.unpaired[kind]).concat([_norm(p.entered.name)]); }); }
   function reconMapNearIdx(kind,i){ const p=RECON[kind]&&RECON[kind].near[i]; if(p) reconMap(kind,p.takeoff.norm,p.entered.name); }
@@ -346,6 +372,8 @@
       if(_norm(r.source_sheet)===sn && String(r.component||"").trim()){ compName=_norm(r.component); return true; }
       return false;
     });
+    // Row tags are often blank; the scope line naming both is the reliable source.
+    if(!compName){ const p=scopeDrawingParent()[sn]; if(p) compName=_norm(p); }
     if(!compName) return "";
     const c=reconEntered('component').filter(function(x){ const n=_norm(x.name); return n===compName||n.indexOf(compName)>-1||compName.indexOf(n)>-1; })[0];
     return c?c.id:"";
@@ -472,12 +500,16 @@
             '<button class="applybtn" style="background:#7d8aa0" onclick="reconMapNearIdx(\''+kind+'\','+i+')" title="Keep yours — retag the BOM rows">keep mine</button> '+
             '<button class="applybtn" style="background:#9aa6b2;padding:1px 7px" onclick="reconUnpairIdx(\''+kind+'\','+i+')">not same</button></td></tr>';
       });
-      // ➕ AI read it, not on the project
+      // ➕ AI read it, not on the project. The "use existing" picker is the third option beyond
+      // add/ignore: fold this value into a record you already have, by retagging the BOM rows.
+      const entered=reconEntered(kind);
+      const optionsHtml=entered.map(function(e){return '<option value="'+escAttr(e.name)+'">'+esc(e.name)+'</option>';}).join("");
       r.takeoffOnly.forEach(function(t,i){
+        const dd = entered.length ? '<select onchange="reconMapIdx(\''+kind+'\','+i+',this)" style="font-size:11px;padding:2px 4px;border:1px solid #cdd3da;border-radius:5px;max-width:150px"><option value="">use existing…</option>'+optionsHtml+'</select> ' : '';
         rows+='<tr><td style="'+TD+'"><b style="color:#3a6ea5">➕</b> '+esc(t.value)+
             (t.rows?' <span class="src">'+t.rows+' row'+(t.rows===1?'':'s')+'</span>':' <span class="src">from scope of work</span>')+'</td>'+
           '<td style="'+TD+'"><span class="src">not on the project</span></td>'+
-          '<td style="'+TD+'; white-space:nowrap">'+
+          '<td style="'+TD+'; white-space:nowrap">'+dd+
             '<button class="applybtn" onclick="reconAddIdx(\''+kind+'\','+i+')" title="Create this '+noun+' on the project">＋ add</button> '+
             '<button class="applybtn" style="background:#9aa6b2;padding:1px 7px" onclick="reconIgnoreIdx(\''+kind+'\','+i+')">ignore</button></td></tr>';
       });
@@ -505,7 +537,7 @@
           '<th style="'+TD+';text-align:left;color:#667;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;width:38%">AI read from sheets</th>'+
           '<th style="'+TD+';text-align:left;color:#667;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;width:34%">On your project</th>'+
           '<th style="'+TD+';text-align:left;color:#667;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em">Action</th>'+
-        '</tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+        '</tr></thead><tbody>'+rows+'</tbody></table></div>'+reconDismissedHtml(kind)+'</div>';
     };
     return '<div class="card"><h2>▸ Scope Reconciliation <span class="lt">— what the AI read vs. what you entered</span></h2><div class="body">'+
       reconNoticeHtml()+
