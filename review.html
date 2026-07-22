@@ -121,7 +121,7 @@
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
-  const VERSION = "v0.33 · 2026-07-21";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.34 · 2026-07-21";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -382,6 +382,28 @@
       render();
     }catch(e2){ alert("Delete failed: "+e2.message); }
   }
+  // How much of the BOM the take-off actually tagged. When this is zero the panel has nothing to
+  // compare against, and "0 matched" reads as a matching failure when it's really an input failure
+  // — so say which one, and which fix applies.
+  function reconCoverage(){
+    const rows=arr(loadResult().rows), live=rows.filter(function(r){return (Number(r.quantity)||0)>0;});
+    const filled=function(f){ return live.filter(function(r){return String(r[f]==null?"":r[f]).trim();}).length; };
+    const keys=rows.length?Object.keys(rows[0]):[];
+    return { rows:rows.length, live:live.length, comp:filled('component'), sheet:filled('source_sheet'),
+             hasKeys:keys.indexOf('component')>-1||keys.indexOf('source_sheet')>-1 };
+  }
+  function reconNoticeHtml(){
+    const c=reconCoverage();
+    if(!c.rows || c.comp || c.sheet) return "";   // nothing loaded, or the take-off tagged something
+    let why;
+    if(!c.hasKeys)      why='This saved result predates the component/drawing fields — <b>re-run the take-off</b> and it will tag rows as it reads them.';
+    else if(!c.live)    why='All '+c.rows+' rows have a quantity of 0, and only rows with quantity &gt; 0 are read here — check the quantity column.';
+    else                why='The AI returned the fields empty. <b>Re-run the take-off</b> now that your components are entered, so it can tag each row as it reads.';
+    return '<div style="padding:8px 10px;border-left:3px solid #d9a441;background:#fff9ef;border-radius:4px;margin-bottom:10px;font-size:12.5px">'+
+      '<b>Nothing to reconcile against.</b> This take-off tagged <b>0 of '+c.live+'</b> priced rows with a component and <b>0</b> with a drawing, '+
+      'so everything below is just your entered list — not a mismatch. '+why+'</div>';
+  }
+
   function reconCardHtml(){
     if(!params.project_id || loadResult().__demo) return "";
     if(!SCOPE_FETCH_DONE) return '<div class="card"><h2>▸ Scope Reconciliation</h2><div class="body" style="color:var(--mut);font-size:13px"><span class="spin"></span> Checking components &amp; drawings against the project…</div></div>';
@@ -419,6 +441,7 @@
       return '<div style="margin-bottom:8px"><div style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#667;margin:2px 0 6px">'+hdr+'</div>'+body+'</div>';
     };
     return '<div class="card"><h2>▸ Scope Reconciliation <span class="lt">— what the AI read vs. what you entered</span></h2><div class="body">'+
+      reconNoticeHtml()+
       sec('component','Components','component')+sec('drawing','Drawings','drawing')+
       '<div class="src" style="margin-top:6px">➕ items import with a blank link unless you <b>add</b> them to the project or <b>map</b> them to an entered value. ≈ near matches will <b>not</b> link until you rename one side. 🗑 delete is blocked while drawings or BOM rows are still linked. Fixes here update the BOM before it commits.</div>'+
       '</div></div>';
