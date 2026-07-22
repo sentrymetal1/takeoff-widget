@@ -121,7 +121,7 @@
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
-  const VERSION = "v0.36 · 2026-07-21";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.37 · 2026-07-22";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -386,6 +386,7 @@
     const r=await fetch(RAILWAY_URL+"/api/takeoff/project-scope/add",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
     const d=await r.json();
     if(!r.ok||d.ok===false) throw new Error(d.error||("HTTP "+r.status));
+    if(d.warning) alert("Added, but: "+d.warning);   // e.g. bidirectional link name rejected
     PROJECT_SCOPE=PROJECT_SCOPE||{components:[],drawings:[]};
     if(kind==='component') PROJECT_SCOPE.components.push({id:d.id,name:value});
     else PROJECT_SCOPE.drawings.push({id:d.id,number:value});
