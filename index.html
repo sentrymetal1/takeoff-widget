@@ -65,8 +65,13 @@
     .foot { text-align:center; color:#aab; font-size:11px; margin-top:18px; }
     /* Scope tree — the estimator's components → drawings, sent as scope_tree. */
     .scope { margin-top:18px; }
-    .scope > .lbl { font-size:12px; color:#556; margin-bottom:6px; }
+    .scope > .lbl { font-size:12px; color:#556; margin-bottom:6px;
+                    display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
     .scope > .lbl .opt { color:#8893a0; font-weight:400; }
+    .scope > .lbl .reload { color:var(--blue); text-decoration:none; font-weight:600; white-space:nowrap; cursor:pointer; }
+    .scope > .lbl .reload:hover { text-decoration:underline; }
+    .scope .sstat { font-size:12px; color:#8893a0; margin:0 0 8px; }
+    .scope .sstat .spin { width:12px; height:12px; border-width:2px; margin-right:6px; }
     .comp { border:1px solid #e3e6ea; border-radius:8px; padding:10px 10px 8px;
             margin-bottom:8px; background:#fafbfc; }
     .comp .crow { display:flex; align-items:center; gap:8px; }
@@ -107,8 +112,12 @@
     <div class="files" id="fileList"></div>
 
     <div class="scope" id="scope">
-      <div class="lbl">Your components &amp; drawings
-        <span class="opt">— optional; list your scope so the AI tags each member to your names and drawing numbers instead of inventing them</span></div>
+      <div class="lbl">
+        <span>Your components &amp; drawings
+          <span class="opt">— pulled from the project; add or edit before running so the AI tags each member to your names and drawing numbers</span></span>
+        <a class="reload" id="reloadScope" title="Re-pull the project's components &amp; drawings">↻ Reload from project</a>
+      </div>
+      <div class="sstat" id="scopeStatus"></div>
       <div id="scopeList"></div>
       <button type="button" class="addc" id="addComp">+ Add component</button>
     </div>
@@ -130,7 +139,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.22 (2026-07-22)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.23 (2026-07-22)";
     // Railway base URL (the material-compass-nesting-app backend that hosts /api/takeoff).
     const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
     // ~32 MB Anthropic request cap; warn the user before they waste a click.
@@ -269,11 +278,6 @@
     const scopeKey = () => "mc_scope_" + (params.project_id || "_");
     function escAttr(s) { return escHtml(s).replace(/"/g, "&quot;"); }
 
-    function loadScope() {
-      try { const s = JSON.parse(localStorage.getItem(scopeKey()) || "null");
-            if (Array.isArray(s) && s.length) scope = s; } catch (e) {}
-      if (!scope.length) scope = [{ name: "", drawings: [""] }];
-    }
     function saveScope() { try { localStorage.setItem(scopeKey(), JSON.stringify(scope)); } catch (e) {} }
 
     function renderScope() {
@@ -346,7 +350,67 @@
       })).filter((n) => n.component);
     }
 
-    loadScope(); renderScope();
+    // True when the working copy actually has something typed (vs. the empty seed row).
+    function scopeHasContent(list) {
+      return Array.isArray(list) && list.some((c) =>
+        String((c && c.name) || "").trim() ||
+        ((c && c.drawings) || []).some((d) => String(d || "").trim()));
+    }
+    function setScopeStatus(html) { document.getElementById("scopeStatus").innerHTML = html || ""; }
+
+    // Pull the project's entered Components + Drawings (nested by the drawing's parent component)
+    // and use them as the working scope. The estimator maintains this list on the project already —
+    // no reason to retype it here. `force` bypasses the "keep my edits" guard for the reload link.
+    async function pullProjectScope(force) {
+      if (!params.project_id) { setScopeStatus("No project on the page URL — type your list below."); return false; }
+      setScopeStatus('<span class="spin"></span>Loading components &amp; drawings from the project…');
+      try {
+        const r = await fetch(RAILWAY_URL + "/api/takeoff/project-scope/" + encodeURIComponent(params.project_id));
+        const d = await r.json();
+        if (!d || d.ok === false) throw new Error((d && d.error) || ("HTTP " + r.status));
+        const tree = Array.isArray(d.tree) ? d.tree : [];
+        const rows = tree.map((n) => ({
+          name: String((n && n.component) || "").trim(),
+          drawings: (Array.isArray(n && n.drawings) ? n.drawings : [])
+            .map((x) => String((x && x.number) || "").trim()).filter(Boolean),
+        })).filter((n) => n.name || n.drawings.length);
+        // Drawings entered on the project but not tied to a component: surface them in an
+        // unnamed row so they're visible and the estimator can name/assign them (the later
+        // reconcile gate formalizes this). A nameless row is dropped from scope_tree on send.
+        const un = (Array.isArray(d.unassigned_drawings) ? d.unassigned_drawings : [])
+          .map((x) => String((x && x.number) || "").trim()).filter(Boolean);
+        if (un.length) rows.push({ name: "", drawings: un });
+        rows.forEach((n) => { if (!n.drawings.length) n.drawings = [""]; });  // keep a UI slot
+
+        if (!rows.length) {
+          if (!scopeHasContent(scope)) { scope = [{ name: "", drawings: [""] }]; renderScope(); }
+          setScopeStatus("No components or drawings entered on this project yet — add them below or on the project.");
+          return false;
+        }
+        scope = rows; saveScope(); renderScope();
+        const nc = rows.filter((n) => n.name).length;
+        const nd = rows.reduce((s, n) => s + n.drawings.filter(Boolean).length, 0);
+        setScopeStatus("Loaded " + nc + " component" + (nc === 1 ? "" : "s") + " and " +
+          nd + " drawing" + (nd === 1 ? "" : "s") + " from the project. Edit as needed before running.");
+        return true;
+      } catch (e) {
+        setScopeStatus('Could not load from the project (' + (e.message || e) + ') — type your list below.');
+        if (!scopeHasContent(scope)) { scope = [{ name: "", drawings: [""] }]; renderScope(); }
+        return false;
+      }
+    }
+
+    // Init: resume an in-progress local copy if the estimator was mid-edit; otherwise pull the
+    // project's scope. The ↻ link always re-pulls (force), replacing the working copy.
+    function initScope() {
+      let local = null;
+      try { local = JSON.parse(localStorage.getItem(scopeKey()) || "null"); } catch (e) {}
+      if (scopeHasContent(local)) { scope = local; renderScope(); setScopeStatus("Resumed your edits. ↻ Reload from project to start over."); }
+      else { scope = [{ name: "", drawings: [""] }]; renderScope(); pullProjectScope(false); }
+    }
+    document.getElementById("reloadScope").addEventListener("click", (e) => { e.preventDefault(); pullProjectScope(true); });
+
+    initScope();
 
     // CSV download helper (the manual-upload fallback when the SDK isn't present).
     function download(name, text) {
