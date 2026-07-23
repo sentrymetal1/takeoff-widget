@@ -63,6 +63,25 @@
              border-radius:6px; font-size:12px; color:#445; white-space:pre-wrap; max-height:180px;
              overflow:auto; }
     .foot { text-align:center; color:#aab; font-size:11px; margin-top:18px; }
+    /* Scope tree — the estimator's components → drawings, sent as scope_tree. */
+    .scope { margin-top:18px; }
+    .scope > .lbl { font-size:12px; color:#556; margin-bottom:6px; }
+    .scope > .lbl .opt { color:#8893a0; font-weight:400; }
+    .comp { border:1px solid #e3e6ea; border-radius:8px; padding:10px 10px 8px;
+            margin-bottom:8px; background:#fafbfc; }
+    .comp .crow { display:flex; align-items:center; gap:8px; }
+    .comp .crow input { flex:1; padding:7px 8px; border:1px solid #cdd3da; border-radius:6px; font-size:13px; }
+    .comp .draws { margin:8px 0 0 14px; }
+    .comp .drow { display:flex; align-items:center; gap:8px; margin-top:6px; }
+    .comp .drow input { flex:1; padding:6px 8px; border:1px solid #d6dbe1; border-radius:6px; font-size:12.5px; }
+    .comp .xbtn { border:0; background:transparent; color:#b45309; cursor:pointer; font-size:14px;
+                  line-height:1; padding:2px 7px; border-radius:4px; }
+    .comp .xbtn:hover { background:#fdeeee; color:#c0392b; }
+    .comp .addd { border:0; background:transparent; color:var(--blue); cursor:pointer;
+                  font-size:12px; padding:6px 2px 0 0; font-weight:600; }
+    .addc { border:1px dashed #c4ccd6; background:#fff; color:var(--blue); cursor:pointer;
+            font-size:13px; font-weight:600; border-radius:6px; padding:9px; width:100%; }
+    .addc:hover { border-color:var(--blue); background:#f0f6fc; }
   </style>
 </head>
 <body>
@@ -87,6 +106,13 @@
     </label>
     <div class="files" id="fileList"></div>
 
+    <div class="scope" id="scope">
+      <div class="lbl">Your components &amp; drawings
+        <span class="opt">— optional; list your scope so the AI tags each member to your names and drawing numbers instead of inventing them</span></div>
+      <div id="scopeList"></div>
+      <button type="button" class="addc" id="addComp">+ Add component</button>
+    </div>
+
     <label class="model">Model</label>
     <select id="model">
       <option value="haiku">Haiku — cheapest, try first</option>
@@ -104,7 +130,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.21 (2026-07-21)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.22 (2026-07-22)";
     // Railway base URL (the material-compass-nesting-app backend that hosts /api/takeoff).
     const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
     // ~32 MB Anthropic request cap; warn the user before they waste a click.
@@ -234,6 +260,94 @@
       go.disabled = over || docs.length === 0;
     }
 
+    // ---- SCOPE TREE (components → drawings) --------------------------------
+    // The estimator arranges their scope here; it's sent as scope_tree so the AI
+    // tags each row to these exact names/numbers (see buildScopeTreeContext on the
+    // server) instead of inventing them. Optional — an empty tree ⇒ the server
+    // falls back to the Zoho-read project context, so existing behavior is intact.
+    let scope = [];                                   // [{ name, drawings:[str] }]
+    const scopeKey = () => "mc_scope_" + (params.project_id || "_");
+    function escAttr(s) { return escHtml(s).replace(/"/g, "&quot;"); }
+
+    function loadScope() {
+      try { const s = JSON.parse(localStorage.getItem(scopeKey()) || "null");
+            if (Array.isArray(s) && s.length) scope = s; } catch (e) {}
+      if (!scope.length) scope = [{ name: "", drawings: [""] }];
+    }
+    function saveScope() { try { localStorage.setItem(scopeKey(), JSON.stringify(scope)); } catch (e) {} }
+
+    function renderScope() {
+      const host = document.getElementById("scopeList");
+      host.innerHTML = scope.map((c, ci) => {
+        const draws = (c.drawings && c.drawings.length ? c.drawings : [""]).map((d, di) =>
+          '<div class="drow">' +
+            '<input type="text" placeholder="Drawing no. (e.g. RIS-48300-S1-A-1)" ' +
+              'data-k="draw" data-ci="' + ci + '" data-di="' + di + '" value="' + escAttr(d) + '" />' +
+            '<button type="button" class="xbtn" data-k="xdraw" data-ci="' + ci + '" data-di="' + di +
+              '" title="Remove drawing" aria-label="Remove drawing">✕</button>' +
+          '</div>'
+        ).join("");
+        return '<div class="comp">' +
+          '<div class="crow">' +
+            '<input type="text" placeholder="Component / assembly (e.g. Upper Frame weldment)" ' +
+              'data-k="comp" data-ci="' + ci + '" value="' + escAttr(c.name) + '" />' +
+            '<button type="button" class="xbtn" data-k="xcomp" data-ci="' + ci +
+              '" title="Remove component" aria-label="Remove component">✕</button>' +
+          '</div>' +
+          '<div class="draws">' + draws +
+            '<button type="button" class="addd" data-k="adddraw" data-ci="' + ci + '">+ add drawing</button>' +
+          '</div>' +
+        '</div>';
+      }).join("");
+    }
+
+    // Text edits: update state WITHOUT re-rendering (a re-render would drop focus/caret).
+    document.getElementById("scope").addEventListener("input", (e) => {
+      const t = e.target; if (t.tagName !== "INPUT") return;
+      const ci = Number(t.getAttribute("data-ci"));
+      if (!scope[ci]) return;
+      if (t.getAttribute("data-k") === "comp") { scope[ci].name = t.value; }
+      else if (t.getAttribute("data-k") === "draw") {
+        const di = Number(t.getAttribute("data-di"));
+        if (!scope[ci].drawings || !scope[ci].drawings.length) scope[ci].drawings = [""];
+        scope[ci].drawings[di] = t.value;
+      }
+      saveScope();
+    });
+    // Add/remove buttons DO re-render (structure changed).
+    document.getElementById("scope").addEventListener("click", (e) => {
+      const btn = e.target.closest("button"); if (!btn) return;
+      const k = btn.getAttribute("data-k"); if (!k) return;   // e.g. #addComp has no data-k
+      const ci = Number(btn.getAttribute("data-ci"));
+      if (!scope[ci]) return;
+      if (k === "adddraw") { scope[ci].drawings.push(""); }
+      else if (k === "xdraw") {
+        const di = Number(btn.getAttribute("data-di"));
+        scope[ci].drawings.splice(di, 1);
+        if (!scope[ci].drawings.length) scope[ci].drawings = [""];
+      }
+      else if (k === "xcomp") {
+        scope.splice(ci, 1);
+        if (!scope.length) scope = [{ name: "", drawings: [""] }];
+      }
+      else return;
+      saveScope(); renderScope();
+    });
+    document.getElementById("addComp").addEventListener("click", () => {
+      scope.push({ name: "", drawings: [""] }); saveScope(); renderScope();
+    });
+
+    // Shape the state into the server's scope_tree = [{component, drawings[]}].
+    // Trim, drop blank drawings, and drop nameless components (server would ignore them anyway).
+    function buildScopeTree() {
+      return scope.map((c) => ({
+        component: String(c.name || "").trim(),
+        drawings: (c.drawings || []).map((d) => String(d || "").trim()).filter(Boolean),
+      })).filter((n) => n.component);
+    }
+
+    loadScope(); renderScope();
+
     // CSV download helper (the manual-upload fallback when the SDK isn't present).
     function download(name, text) {
       const blob = new Blob([text], { type: "text/csv" });
@@ -284,6 +398,7 @@
             manufacturer_id: params.manufacturer_id,
             pdfs: docs.map((d) => d.b64),
             model: document.getElementById("model").value,
+            scope_tree: buildScopeTree(),   // user-arranged components → drawings (authoritative; [] ⇒ server falls back)
           }),
         });
         const data = await r.json();
