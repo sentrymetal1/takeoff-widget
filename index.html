@@ -87,6 +87,25 @@
     .addc { border:1px dashed #c4ccd6; background:#fff; color:var(--blue); cursor:pointer;
             font-size:13px; font-weight:600; border-radius:6px; padding:9px; width:100%; }
     .addc:hover { border-color:var(--blue); background:#f0f6fc; }
+    .comp .ddesc { font-size:11px; color:#8893a0; margin:2px 0 0 4px; }
+    /* PDF sheet-read → allocation preview */
+    .scanbtn { margin-top:8px; width:100%; padding:9px; border:1px solid var(--blue); border-radius:6px;
+               background:#f0f6fc; color:var(--blue); font-weight:600; font-size:13px; cursor:pointer; }
+    .scanbtn:hover { background:#e4eefa; }
+    .scanbtn:disabled { opacity:.6; cursor:default; }
+    .alloc { margin-top:10px; border:1px solid #cfe0f2; border-radius:8px; background:#f7fafd; padding:12px; }
+    .alloc .ahd { font-size:12.5px; color:#334; font-weight:600; margin-bottom:6px; }
+    .alloc .arow { display:flex; align-items:center; gap:8px; padding:7px 0; border-top:1px solid #e6eef7; }
+    .alloc .arow:first-of-type { border-top:0; }
+    .alloc .anum { font-weight:600; color:#2b3340; font-size:13px; white-space:nowrap; }
+    .alloc .adesc { color:#667; font-size:12px; flex:1; min-width:0; overflow:hidden;
+                    text-overflow:ellipsis; white-space:nowrap; }
+    .alloc .apg { color:#8893a0; font-size:11px; white-space:nowrap; }
+    .alloc .arow.low .anum { color:#b45309; }
+    .alloc .arrow { color:#8893a0; font-size:12px; }
+    .alloc select { padding:5px 6px; border:1px solid #cdd3da; border-radius:5px; font-size:12px; max-width:160px; }
+    .alloc .aapply { margin-top:10px; width:100%; padding:9px; border:0; border-radius:6px;
+                     background:var(--blue); color:#fff; font-weight:600; font-size:13px; cursor:pointer; }
   </style>
 </head>
 <body>
@@ -120,6 +139,8 @@
       <div class="sstat" id="scopeStatus"></div>
       <div id="scopeList"></div>
       <button type="button" class="addc" id="addComp">+ Add component</button>
+      <button type="button" class="scanbtn" id="scanPdf" style="display:none">🔍 Read drawings from the PDF</button>
+      <div id="allocPanel"></div>
     </div>
 
     <label class="model">Model</label>
@@ -139,7 +160,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.23 (2026-07-22)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.24 (2026-07-22)";
     // Railway base URL (the material-compass-nesting-app backend that hosts /api/takeoff).
     const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
     // ~32 MB Anthropic request cap; warn the user before they waste a click.
@@ -267,6 +288,7 @@
             (over ? "  — over " + MAX_MB + " MB, trim before running" : "") + "</b></div>"
         : '<div class="fmb" style="padding:6px 2px">No files yet — choose or drop PDFs above.</div>';
       go.disabled = over || docs.length === 0;
+      updateScanBtn();
     }
 
     // ---- SCOPE TREE (components → drawings) --------------------------------
@@ -275,22 +297,32 @@
     // server) instead of inventing them. Optional — an empty tree ⇒ the server
     // falls back to the Zoho-read project context, so existing behavior is intact.
     let scope = [];                                   // [{ name, drawings:[str] }]
+    let descMap = {};                                 // drawing number → description (read from the PDF)
+    let detected = [];                                // last PDF sheet-read: [{number,title,pages,confidence,compIdx}]
     const scopeKey = () => "mc_scope_" + (params.project_id || "_");
+    const descKey = () => "mc_desc_" + (params.project_id || "_");
     function escAttr(s) { return escHtml(s).replace(/"/g, "&quot;"); }
 
-    function saveScope() { try { localStorage.setItem(scopeKey(), JSON.stringify(scope)); } catch (e) {} }
+    function saveScope() {
+      try {
+        localStorage.setItem(scopeKey(), JSON.stringify(scope));
+        localStorage.setItem(descKey(), JSON.stringify(descMap));
+      } catch (e) {}
+    }
 
     function renderScope() {
       const host = document.getElementById("scopeList");
       host.innerHTML = scope.map((c, ci) => {
-        const draws = (c.drawings && c.drawings.length ? c.drawings : [""]).map((d, di) =>
-          '<div class="drow">' +
+        const draws = (c.drawings && c.drawings.length ? c.drawings : [""]).map((d, di) => {
+          const desc = descMap[String(d || "").trim()];   // description read from the PDF, if any
+          return '<div class="drow">' +
             '<input type="text" placeholder="Drawing no. (e.g. RIS-48300-S1-A-1)" ' +
               'data-k="draw" data-ci="' + ci + '" data-di="' + di + '" value="' + escAttr(d) + '" />' +
             '<button type="button" class="xbtn" data-k="xdraw" data-ci="' + ci + '" data-di="' + di +
               '" title="Remove drawing" aria-label="Remove drawing">✕</button>' +
-          '</div>'
-        ).join("");
+          '</div>' +
+          (desc ? '<div class="ddesc">' + escHtml(desc) + '</div>' : '');
+        }).join("");
         return '<div class="comp">' +
           '<div class="crow">' +
             '<input type="text" placeholder="Component / assembly (e.g. Upper Frame weldment)" ' +
@@ -339,6 +371,134 @@
     });
     document.getElementById("addComp").addEventListener("click", () => {
       scope.push({ name: "", drawings: [""] }); saveScope(); renderScope();
+    });
+
+    // ---- PDF SHEET-READ → ALLOCATION --------------------------------------
+    // Read the ACTUAL drawing/sheet numbers + descriptions out of the loaded PDF (the cheap
+    // /api/takeoff/index pass), show them, and let the estimator confirm which component each
+    // goes under. With one component, they all default to it. The confirmed allocation becomes
+    // the drawings under each component — i.e. what rides in scope_tree to the take-off.
+    const _norm = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const namedComps = () => scope.map((c, i) => ({ i, name: String(c.name || "").trim() })).filter((x) => x.name);
+    // Best-guess component for a detected sheet: single component ⇒ it; else match the sheet
+    // number against each component's name or its already-listed drawings; else the first.
+    function guessComp(num) {
+      const named = namedComps();
+      if (named.length <= 1) return named.length ? named[0].i : -1;
+      const sn = _norm(num);
+      for (const x of named) {
+        if (_norm(x.name) && sn.indexOf(_norm(x.name)) > -1) return x.i;
+        for (const d of (scope[x.i].drawings || [])) {
+          const dn = _norm(d);
+          if (dn && (sn.indexOf(dn) > -1 || dn.indexOf(sn) > -1)) return x.i;
+        }
+      }
+      return named[0].i;
+    }
+    function updateScanBtn() {
+      const b = document.getElementById("scanPdf");
+      if (b) b.style.display = docs.length ? "block" : "none";
+    }
+
+    async function scanPdf() {
+      if (!docs.length) return;
+      const btn = document.getElementById("scanPdf");
+      btn.disabled = true;
+      setScopeStatus('<span class="spin"></span>Reading drawing numbers from the PDF…');
+      try {
+        const r = await fetch(RAILWAY_URL + "/api/takeoff/index", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pdfs: docs.map((d) => d.b64), model: "haiku" }),  // haiku: cheap title-block read
+        });
+        const d = await r.json();
+        if (!r.ok || d.ok === false) throw new Error((d && d.error) || ("HTTP " + r.status));
+        const sheets = Array.isArray(d.sheets) ? d.sheets : [];
+        if (!sheets.length) {
+          detected = []; renderAlloc();
+          setScopeStatus("No drawing numbers found in the PDF — type them under a component instead.");
+          return;
+        }
+        detected = sheets.map((s) => ({
+          number: String(s.number || "").trim(),
+          title: String(s.title || "").trim(),
+          pages: Array.isArray(s.pages) ? s.pages : [],
+          confidence: (s.confidence == null ? null : Number(s.confidence)),
+          compIdx: guessComp(String(s.number || "")),
+        })).filter((s) => s.number);
+        renderAlloc();
+        setScopeStatus("Found " + detected.length + " drawing" + (detected.length === 1 ? "" : "s") +
+          " in the PDF" + (d.cost_usd != null ? " ($" + d.cost_usd + ")" : "") + ". Confirm how they're allocated below.");
+      } catch (e) {
+        setScopeStatus("Couldn't read the PDF (" + (e.message || e) + "). You can still type drawings manually.");
+      } finally { btn.disabled = false; }
+    }
+
+    function renderAlloc() {
+      const host = document.getElementById("allocPanel");
+      if (!detected.length) { host.innerHTML = ""; return; }
+      const named = namedComps();
+      const valid = new Set(named.map((x) => x.i));
+      const rows = detected.map((s, k) => {
+        if (!valid.has(s.compIdx)) s.compIdx = named.length ? named[0].i : -1;   // clamp a stale index
+        const low = (s.confidence != null && s.confidence < 0.5);
+        const pg = (s.pages && s.pages.length)
+          ? '<span class="apg">p.' + s.pages[0] + ((s.pages[1] && s.pages[1] !== s.pages[0]) ? "–" + s.pages[1] : "") + "</span>" : "";
+        const sel = named.length
+          ? '<select data-k="' + k + '">' +
+              named.map((x) => '<option value="' + x.i + '"' + (x.i === s.compIdx ? " selected" : "") + ">" + escHtml(x.name) + "</option>").join("") +
+            "</select>"
+          : '<span class="apg">name a component first</span>';
+        return '<div class="arow' + (low ? " low" : "") + '">' +
+          '<span class="anum">' + escHtml(s.number) + "</span>" +
+          '<span class="adesc">' + escHtml(s.title || "") + "</span>" + pg +
+          '<span class="arrow" style="margin-left:auto">→</span>' + sel +
+        "</div>";
+      }).join("");
+      host.innerHTML = '<div class="alloc">' +
+        '<div class="ahd">Detected ' + detected.length + " drawing" + (detected.length === 1 ? "" : "s") +
+          " in the PDF — confirm how they go into the take-off:</div>" +
+        rows +
+        (named.length
+          ? '<button type="button" class="aapply" id="applyAlloc">✓ Use this allocation</button>'
+          : '<div class="apg" style="margin-top:8px">Add or name a component above, then re-read.</div>') +
+      "</div>";
+    }
+
+    // Write the confirmed allocation into the tree: each component's drawings become the sheet
+    // numbers assigned to it (deduped), and their descriptions fill descMap for inline display.
+    function applyAlloc() {
+      const byIdx = {};
+      detected.forEach((s) => {
+        if (s.compIdx == null || s.compIdx < 0 || !scope[s.compIdx]) return;
+        (byIdx[s.compIdx] = byIdx[s.compIdx] || []).push(s);
+      });
+      const idxs = Object.keys(byIdx);
+      if (!idxs.length) { setScopeStatus("Nothing to allocate — name a component first."); return; }
+      idxs.forEach((idx) => {
+        const nums = [], seen = {};
+        byIdx[idx].forEach((s) => {
+          const n = String(s.number || "").trim();
+          if (!n || seen[n.toLowerCase()]) return;
+          seen[n.toLowerCase()] = 1; nums.push(n); descMap[n] = s.title || "";
+        });
+        if (nums.length) scope[idx].drawings = nums;
+      });
+      const total = idxs.reduce((sum, i) => sum + byIdx[i].length, 0);
+      detected = [];
+      saveScope(); renderScope();
+      document.getElementById("allocPanel").innerHTML = "";
+      setScopeStatus("Allocated " + total + " drawing" + (total === 1 ? "" : "s") + " from the PDF into " +
+        idxs.length + " component" + (idxs.length === 1 ? "" : "s") + ". Review below, then Run take-off.");
+    }
+
+    document.getElementById("scanPdf").addEventListener("click", scanPdf);
+    document.getElementById("allocPanel").addEventListener("change", (e) => {
+      if (e.target.tagName !== "SELECT") return;
+      const k = Number(e.target.getAttribute("data-k"));
+      if (detected[k]) detected[k].compIdx = Number(e.target.value);
+    });
+    document.getElementById("allocPanel").addEventListener("click", (e) => {
+      if (e.target.closest("#applyAlloc")) applyAlloc();
     });
 
     // Shape the state into the server's scope_tree = [{component, drawings[]}].
@@ -403,6 +563,7 @@
     // Init: resume an in-progress local copy if the estimator was mid-edit; otherwise pull the
     // project's scope. The ↻ link always re-pulls (force), replacing the working copy.
     function initScope() {
+      try { const dm = JSON.parse(localStorage.getItem(descKey()) || "null"); if (dm && typeof dm === "object") descMap = dm; } catch (e) {}
       let local = null;
       try { local = JSON.parse(localStorage.getItem(scopeKey()) || "null"); } catch (e) {}
       if (scopeHasContent(local)) { scope = local; renderScope(); setScopeStatus("Resumed your edits. ↻ Reload from project to start over."); }
