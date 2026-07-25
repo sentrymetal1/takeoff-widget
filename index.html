@@ -108,6 +108,12 @@
     .alloc { margin-top:10px; border:1px solid #cfe0f2; border-radius:8px; background:#f7fafd; padding:12px 14px 14px; }
     .alloc .ahd { font-size:12.5px; color:#334; font-weight:600; margin-bottom:2px; }
     .alloc .ahint { font-size:11.5px; color:#8893a0; margin-bottom:8px; }
+    /* Page-count reconciliation — the PDF's own page count vs. the drawings found. */
+    .aud { font-size:12.5px; border-radius:6px; padding:9px 11px; margin-bottom:10px; line-height:1.45; }
+    .aud.ok   { background:#eef8f0; border:1px solid #cfe8d6; color:#1e5b32; }
+    .aud.warn { background:#fff7ed; border:1px solid #fcd9a8; color:#8a4b09; }
+    .aud b { font-weight:700; }
+    .aud .sub2 { display:block; margin-top:3px; font-size:11.5px; opacity:.9; }
     /* Aligned columns: sheet no. | title | pages | → | component | remove */
     .alloc .agrid { display:grid; grid-template-columns:max-content minmax(0,1fr) max-content 12px minmax(150px,220px) max-content;
                     align-items:center; column-gap:10px; }
@@ -115,7 +121,16 @@
                      padding-bottom:6px; border-bottom:1px solid #dde8f4; }
     .alloc .agrid > div { padding:6px 0; border-bottom:1px solid #e6eef7; min-width:0; }
     .alloc .agrid > div.acolhd { padding:0 0 6px; }
-    .alloc .anum { font-weight:600; color:#2b3340; font-size:13px; white-space:nowrap; }
+    /* The number is editable in place — a misread digit shouldn't mean re-reading the PDF. */
+    .alloc input.anum { font-weight:600; color:#2b3340; font-size:13px; font-family:inherit;
+                        border:1px solid transparent; background:transparent; border-radius:4px;
+                        padding:3px 5px; width:16ch; }
+    .alloc input.anum:hover { border-color:#dde8f4; background:#fff; }
+    .alloc input.anum:focus { border-color:var(--blue); background:#fff; outline:none; }
+    .alloc .low input.anum { color:#b45309; }
+    .alloc .asplit { border:1px solid #cfe0f2; background:#fff; color:var(--blue); cursor:pointer;
+                     font-size:10.5px; font-weight:600; border-radius:4px; padding:2px 6px; margin-left:6px; }
+    .alloc .asplit:hover { background:#f0f6fc; }
     .alloc .adesc { color:#667; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .alloc .apg { color:#8893a0; font-size:11px; white-space:nowrap; }
     .alloc .low .anum { color:#b45309; }
@@ -188,7 +203,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.25 (2026-07-25)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.26 (2026-07-25)";
     // Railway base URL (the material-compass-nesting-app backend that hosts /api/takeoff).
     const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
     // ~32 MB Anthropic request cap; warn the user before they waste a click.
@@ -273,7 +288,7 @@
     document.getElementById("fileList").addEventListener("click", (e) => {
       const btn = e.target.closest(".fx"); if (!btn) return;
       const i = Number(btn.getAttribute("data-i"));
-      if (i >= 0 && i < docs.length) { docs.splice(i, 1); renderFiles(); }
+      if (i >= 0 && i < docs.length) { docs.splice(i, 1); invalidateScan(); renderFiles(); }
     });
 
     function readAsB64(f) {
@@ -291,14 +306,26 @@
       const incoming = [...fileListLike].filter((f) => f.type === "application/pdf");
       fileEl.value = "";
       if (!incoming.length) { statusEl.textContent = "Please choose PDF files."; return; }
-      let dupes = 0;
+      let dupes = 0, added = 0;
       for (const f of incoming) {
         const key = f.name + "|" + f.size;
         if (docs.some((d) => d.key === key)) { dupes++; continue; }
         docs.push({ key, name: f.name, b64: await readAsB64(f), mb: f.size / 1024 / 1024 });
+        added++;
       }
+      if (added) invalidateScan();
       renderFiles();
       statusEl.textContent = dupes ? (dupes + " file" + (dupes > 1 ? "s" : "") + " already added — skipped.") : "";
+    }
+
+    // The page tally belongs to the exact set of files that were read. Change the files and
+    // it's stale — throw it away rather than show a count that no longer matches the PDFs.
+    function invalidateScan() {
+      if (!audit && !detected.length) return;
+      audit = null; detected = [];
+      docs.forEach((d) => { d.pages = 0; });
+      renderAlloc();
+      setScopeStatus("Files changed — read the drawings from the PDF again to re-check the count.");
     }
 
     function escHtml(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
@@ -308,11 +335,14 @@
       const over = totalMb > MAX_MB;
       const rows = docs.map((d, i) =>
         '<div class="frow"><span class="fname">• ' + escHtml(d.name) +
-          '  <span class="fmb">(' + d.mb.toFixed(1) + ' MB)</span></span>' +
+          '  <span class="fmb">(' + d.mb.toFixed(1) + ' MB' +
+            (d.pages ? ' · ' + d.pages + ' page' + (d.pages === 1 ? '' : 's') : '') + ')</span></span>' +
           '<button type="button" class="fx" data-i="' + i + '" title="Remove this file" aria-label="Remove">✕</button></div>'
       ).join("");
+      const totalPages = docs.reduce((s, d) => s + (d.pages || 0), 0);
       document.getElementById("fileList").innerHTML = docs.length
         ? rows + '<div class="' + (over ? "big" : "") + '"><b>Total: ' + totalMb.toFixed(1) + " MB" +
+            (totalPages ? " · " + totalPages + " page" + (totalPages === 1 ? "" : "s") : "") +
             (over ? "  — over " + MAX_MB + " MB, trim before running" : "") + "</b></div>"
         : '<div class="fmb" style="padding:6px 2px">No files yet — choose or drop PDFs above.</div>';
       go.disabled = over || docs.length === 0;
@@ -327,6 +357,7 @@
     let scope = [];                                   // [{ name, drawings:[str] }]
     let descMap = {};                                 // drawing number → description (read from the PDF)
     let detected = [];                                // last PDF sheet-read: [{number,title,pages,confidence,compIdx}]
+    let audit = null;                                 // last sheet-read's page reconciliation (server-parsed page count)
     const scopeKey = () => "mc_scope_" + (params.project_id || "_");
     const descKey = () => "mc_desc_" + (params.project_id || "_");
     function escAttr(s) { return escHtml(s).replace(/"/g, "&quot;"); }
@@ -430,7 +461,7 @@
     function dedupeSheets(list) {
       const byKey = {}, out = [];
       list.forEach((s) => {
-        const key = _norm(s.number);
+        const key = (s.doc || 1) + "|" + _norm(s.number);
         const prev = byKey[key];
         if (!prev) { byKey[key] = s; out.push(s); return; }
         const pa = prev.pages || [], pb = s.pages || [];
@@ -438,12 +469,95 @@
           const all = pa.concat(pb).map(Number).filter((n) => !isNaN(n));
           if (all.length) prev.pages = [Math.min(...all), Math.max(...all)];
         }
+        if (s.pageList && s.pageList.length) prev.pageList = (prev.pageList || []).concat(s.pageList);
         if (s.title && s.title.length > (prev.title || "").length) prev.title = s.title;
         if (s.confidence != null) {
           prev.confidence = (prev.confidence == null) ? s.confidence : Math.max(prev.confidence, s.confidence);
         }
       });
       return out;
+    }
+
+    // ---- PAGE ↔ DRAWING RECONCILIATION ------------------------------------
+    // The point: pages are ground truth (parsed from the PDF file itself, server-side), and
+    // drawings are DERIVED from them — so the drawing count is checkable arithmetic, not the
+    // model's opinion. Every page ends up in exactly one bucket: on a drawing, no drawing
+    // number (cover/index/notes), or never read back. Recomputed on every render, so dropping
+    // a row updates the tally instead of leaving a stale "all good".
+    function pageTally() {
+      if (!audit || !Array.isArray(audit.docs)) return null;
+      const total = audit.docs.reduce((s, a) => s + (a.pages || 0), 0);
+      if (!total) return null;
+      const covered = {};                               // "doc:page" → on a kept drawing
+      detected.forEach((s) => {
+        pagesOf(s).forEach((p) => { if (p) covered[(s.doc || 1) + ":" + p] = 1; });
+      });
+      const notRead = (audit.pages_missing || []).map((p) => (p.doc || 1) + ":" + p.page);
+      const notReadSet = {}; notRead.forEach((k) => { notReadSet[k] = 1; });
+      const noNumber = [];
+      audit.docs.forEach((a) => {
+        for (let p = 1; p <= (a.pages || 0); p++) {
+          const k = (a.doc || 1) + ":" + p;
+          if (!covered[k] && !notReadSet[k]) noNumber.push({ doc: a.doc || 1, page: p });
+        }
+      });
+      // A drawing covering several pages is legitimate, but it's also what a MISREAD number
+      // looks like (two different sheets read as the same number collapse into one row), so
+      // it's always called out and can be split back apart.
+      const multi = detected.map((s, k) => ({ k: k, s: s, n: pagesOf(s).length }))
+        .filter((x) => x.n > 1);
+      return {
+        total: total, drawings: detected.length, multi: multi,
+        onDrawing: Object.keys(covered).length,
+        noNumber: noNumber,                              // read, but no title-block number (cover/index) or row dropped
+        notRead: (audit.pages_missing || []),            // the model never returned these pages
+        twice: audit.pages_reported_twice || 0,
+        split: audit.split_numbers || [],
+      };
+    }
+    function rangeOf(a, b) { const out = []; for (let i = Number(a); i <= Number(b); i++) out.push(i); return out; }
+    // Every page this row covers — the explicit page list if the server sent one, else its range.
+    function pagesOf(s) {
+      if (s.pageList && s.pageList.length) return s.pageList.slice().sort((a, b) => a - b);
+      if (s.pages && s.pages.length) return rangeOf(s.pages[0], s.pages[1] == null ? s.pages[0] : s.pages[1]);
+      return [];
+    }
+    function pageLabels(arr) {
+      const shown = arr.slice(0, 12).map((p) => "p." + p.page + (p.doc > 1 ? " (file " + p.doc + ")" : "")).join(", ");
+      return shown + (arr.length > 12 ? " …" : "");
+    }
+
+    function auditHtml() {
+      if (!audit) return "";
+      const t = pageTally();
+      if (!t) {
+        return '<div class="aud warn">⚠ Couldn’t read the page count out of the PDF, so the ' + detected.length +
+          " drawing" + (detected.length === 1 ? "" : "s") + " below could not be checked against it. Review the list by eye.</div>";
+      }
+      const head = "<b>" + t.total + " page" + (t.total === 1 ? "" : "s") + "</b> in the PDF → <b>" +
+        t.drawings + " drawing" + (t.drawings === 1 ? "" : "s") + "</b>";
+      const bad = [];
+      if (t.notRead.length) bad.push(t.notRead.length + " page" + (t.notRead.length === 1 ? "" : "s") +
+        " never came back from the read (" + pageLabels(t.notRead) + ")");
+      if (t.twice) bad.push(t.twice + " page" + (t.twice === 1 ? "" : "s") + " reported twice (collapsed)");
+      if (t.split.length) bad.push("appears on non-adjacent pages: " + t.split.slice(0, 6).join(", "));
+      let extra = t.noNumber.length
+        ? '<span class="sub2">' + t.noNumber.length + " page" + (t.noNumber.length === 1 ? "" : "s") +
+          " carry no drawing number (" + pageLabels(t.noNumber) + ") — normal for cover, index and notes pages.</span>"
+        : "";
+      if (t.multi.length) {
+        extra += '<span class="sub2">⚑ ' + t.multi.length + (t.multi.length === 1 ? " drawing covers" : " drawings cover") +
+          " more than one page (" +
+          t.multi.slice(0, 6).map((x) => escHtml(x.s.number) + " p." + pagesOf(x.s)[0] + "–" + pagesOf(x.s).slice(-1)[0]).join(", ") +
+          "). If that's really two drawings read as one number, hit <b>Split</b> on the row and fix the number.</span>";
+      }
+      if (!bad.length) {
+        return '<div class="aud ok">✓ ' + head + " — all " + t.total + " pages accounted for: " +
+          t.onDrawing + " on a drawing" + (t.noNumber.length ? ", " + t.noNumber.length + " without a number" : "") + "." +
+          extra + "</div>";
+      }
+      return '<div class="aud warn">⚠ ' + head + " — " + bad.join("; ") +
+        ". Re-read the PDF, or add the missing drawing numbers by hand below." + extra + "</div>";
     }
 
     function updateScanBtn() {
@@ -459,27 +573,33 @@
       try {
         const r = await fetch(RAILWAY_URL + "/api/takeoff/index", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pdfs: docs.map((d) => d.b64), model: "haiku" }),  // haiku: cheap title-block read
+          body: JSON.stringify({ pdfs: docs.map((d) => d.b64), names: docs.map((d) => d.name), model: "haiku" }),  // haiku: cheap title-block read
         });
         const d = await r.json();
         if (!r.ok || d.ok === false) throw new Error((d && d.error) || ("HTTP " + r.status));
         const sheets = Array.isArray(d.sheets) ? d.sheets : [];
-        if (!sheets.length) {
-          detected = []; renderAlloc();
-          setScopeStatus("No drawing numbers found in the PDF — type them under a component instead.");
-          return;
+        // The server parses the real page count out of each PDF — show it on the files.
+        audit = d.audit || null;
+        if (audit && Array.isArray(audit.docs)) {
+          audit.docs.forEach((a, i) => { if (docs[i]) docs[i].pages = a.pages || 0; });
+          renderFiles();
         }
         detected = dedupeSheets(sheets.map((s) => ({
+          doc: Number(s.doc) || 1,
           number: String(s.number || "").trim(),
           title: String(s.title || "").trim(),
           pages: Array.isArray(s.pages) ? s.pages : [],
+          pageList: Array.isArray(s.page_list) ? s.page_list.map(Number) : null,
           confidence: (s.confidence == null ? null : Number(s.confidence)),
           compIdx: guessComp(String(s.number || "")),
         })).filter((s) => s.number));
         renderAlloc();
-        const dropped = sheets.length - detected.length;
-        setScopeStatus("Found " + detected.length + " drawing" + (detected.length === 1 ? "" : "s") +
-          " in the PDF" + (dropped > 0 ? " (merged " + dropped + " repeated sheet number" + (dropped === 1 ? "" : "s") + ")" : "") +
+        if (!detected.length) {
+          setScopeStatus("No drawing numbers found in the PDF — type them under a component instead.");
+          return;
+        }
+        setScopeStatus("Read " + (audit && audit.page_count ? audit.page_count + " page" + (audit.page_count === 1 ? "" : "s") + " → " : "") +
+          detected.length + " drawing" + (detected.length === 1 ? "" : "s") +
           (d.cost_usd != null ? " ($" + d.cost_usd + ")" : "") + ". Confirm how they're allocated below.");
       } catch (e) {
         setScopeStatus("Couldn't read the PDF (" + (e.message || e) + "). You can still type drawings manually.");
@@ -488,7 +608,12 @@
 
     function renderAlloc() {
       const host = document.getElementById("allocPanel");
-      if (!detected.length) { host.innerHTML = ""; return; }
+      if (!detected.length && !audit) { host.innerHTML = ""; return; }
+      if (!detected.length) {   // read happened but nothing usable came out — still show the tally
+        host.innerHTML = '<div class="alloc">' + auditHtml() +
+          '<div class="apg">No drawing numbers were read — type them under a component instead.</div></div>';
+        return;
+      }
       const named = namedComps();
       const valid = new Set(named.map((x) => x.i));
       const rows = detected.map((s, k) => {
@@ -501,18 +626,24 @@
               named.map((x) => '<option value="' + x.i + '"' + (x.i === s.compIdx ? " selected" : "") + ">" + escHtml(x.name) + "</option>").join("") +
             "</select>"
           : '<span class="apg">name a component first</span>';
-        return '<div class="' + low + '"><span class="anum">' + escHtml(s.number) + "</span></div>" +
+        const span = pagesOf(s).length;
+        return '<div class="' + low + '"><input type="text" class="anum" data-num="' + k + '" value="' +
+            escAttr(s.number) + '" title="Correct the drawing number if it was misread" /></div>' +
           '<div class="adesc" title="' + escAttr(s.title || "") + '">' + escHtml(s.title || "") + "</div>" +
-          '<div class="apg">' + pg + "</div>" +
+          '<div class="apg">' + pg +
+            (span > 1 ? ' <button type="button" class="asplit" data-split="' + k +
+              '" title="Split into one row per page — use if two drawings were read as one number">Split</button>' : "") +
+          "</div>" +
           '<div class="arrow">→</div>' +
           "<div>" + sel + "</div>" +
           '<div><button type="button" class="adrop" data-drop="' + k + '" title="Not a drawing — remove this row" aria-label="Remove">✕</button></div>';
       }).join("");
       host.innerHTML = '<div class="alloc">' +
+        auditHtml() +
         '<div class="ahd">Detected ' + detected.length + " drawing" + (detected.length === 1 ? "" : "s") +
           " in the PDF — confirm how they go into the take-off:</div>" +
-        '<div class="ahint">One row per sheet number (repeated sheet numbers are merged). ' +
-          'Drop any row that isn’t a drawing.</div>' +
+        '<div class="ahint">Numbers are editable — fix a misread one in place, <b>Split</b> a row that ' +
+          'covers two drawings, ✕ a row that isn’t a drawing.</div>' +
         '<div class="agrid">' +
           '<div class="acolhd">Drawing no.</div><div class="acolhd">Title</div><div class="acolhd">Pages</div>' +
           '<div class="acolhd"></div><div class="acolhd">Component</div><div class="acolhd"></div>' +
@@ -557,14 +688,39 @@
       const k = Number(e.target.getAttribute("data-k"));
       if (detected[k]) detected[k].compIdx = Number(e.target.value);
     });
+    // Correcting a misread number: update state only — re-rendering would drop the caret.
+    document.getElementById("allocPanel").addEventListener("input", (e) => {
+      const t = e.target;
+      if (!t.classList || !t.classList.contains("anum")) return;
+      const k = Number(t.getAttribute("data-num"));
+      if (detected[k]) detected[k].number = t.value;
+    });
     document.getElementById("allocPanel").addEventListener("click", (e) => {
       if (e.target.closest("#applyAlloc")) { applyAlloc(); return; }
+      const sp = e.target.closest(".asplit");             // two drawings read as one number
+      if (sp) { splitRow(Number(sp.getAttribute("data-split"))); return; }
       const drop = e.target.closest(".adrop");            // a mis-read row (index page, detail, etc.)
       if (drop) {
         const k = Number(drop.getAttribute("data-drop"));
         if (k >= 0 && k < detected.length) { detected.splice(k, 1); renderAlloc(); }
       }
     });
+
+    // Break a multi-page row back into one row per page, so a number misread on one page can
+    // be corrected without re-reading the PDF. Pages stay covered either way, so the tally holds.
+    function splitRow(k) {
+      const s = detected[k];
+      if (!s) return;
+      const pages = pagesOf(s);
+      if (pages.length < 2) return;
+      const rows = pages.map((p) => ({
+        doc: s.doc || 1, number: s.number, title: s.title, pages: [p, p], pageList: [p],
+        confidence: s.confidence, compIdx: s.compIdx,
+      }));
+      detected.splice.apply(detected, [k, 1].concat(rows));
+      renderAlloc();
+      setScopeStatus("Split into " + rows.length + " rows — correct the drawing number on each.");
+    }
 
     // Shape the state into the server's scope_tree = [{component, drawings[]}].
     // Trim, drop blank drawings, and drop nameless components (server would ignore them anyway).
