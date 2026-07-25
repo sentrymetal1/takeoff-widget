@@ -25,6 +25,11 @@
   .appbar .brand{font-weight:800;font-size:16px;color:var(--blue);letter-spacing:.2px;}
   .appbar .page{font-size:13px;color:var(--mut);border-left:1px solid var(--line);padding-left:10px;}
   .applybtn{font-size:11px;color:#fff;background:var(--blue);border:0;border-radius:5px;padding:2px 9px;cursor:pointer;margin-left:4px;}
+  /* Material check — rows that can't resolve against the shop's catalog */
+  .matrow{border-top:1px solid #f2e4e4;padding:9px 0;font-size:13px;}
+  .matrow:first-of-type{border-top:0;}
+  .matquick{margin-top:5px;font-size:12px;color:var(--mut);}
+  .matquick select{font-size:12px;padding:3px 6px;border:1px solid #cdd3da;border-radius:5px;max-width:260px;}
   .applybtn:hover{opacity:.9;}
   .applybtn:disabled{opacity:.5;cursor:default;}
   .busy{position:fixed;top:0;left:0;right:0;z-index:50;background:var(--blue);color:#fff;text-align:center;
@@ -121,7 +126,7 @@
 <script>
   // ---- CONFIG (CONFIRM link names — same Z block as index.html) --------------
   const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
-  const VERSION = "v0.37 · 2026-07-22";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
+  const VERSION = "v0.38 · 2026-07-25";  // bump on every push so you can verify what loaded (Pages CDN caches ~10min)
   console.log("Material Compass review.html " + VERSION);
   const Z = {
     APP:"type-formsheet-2-18-21",            // app link name
@@ -548,6 +553,9 @@
   }
 
   function render(){
+    // Catalog arrives async; the first render just skips the material card and re-renders once
+    // it's in. Never blocks the page on a lookup.
+    if(CATALOG===null && !CATALOG_LOADING){ CATALOG_LOADING=true; loadCatalog().then(function(){ render(); }); }
     const _aiKeep = (document.getElementById("aiInput")||{}).value;  // preserve in-progress chat text across re-render
     const R = loadResult();
     const rows = arr(R.rows);
@@ -644,6 +652,9 @@
                   '</div></div>').join("")
               : '<div style="color:var(--mut);font-size:13px">No scope items.</div>'))+
         '</div></div>':'')+
+
+      // material check — rows that can't resolve against the shop's catalog, fixable here
+      materialCardHtml(rows)+
 
       // scope reconciliation — AI-read components/drawings vs. what you entered on the project
       reconCardHtml()+
@@ -850,6 +861,105 @@
     });
     return out.join("\n");
   }
+  // ---- MATERIAL CHECK ------------------------------------------------------
+  // A row whose Material is blank or isn't in the shop's catalog can't resolve on import — it
+  // shows up red here and errors in staging. The model is now given the real size list, but this
+  // is the backstop: check every row against that SAME list, and let it be fixed here, before
+  // anything is committed. Nearest sizes are offered so a fix is a click, not a hunt.
+  let CATALOG = null;                       // { "Form Type|Material Type": [size,...] }; null = not fetched yet
+  let CATALOG_LOADING = false;
+  async function loadCatalog(){
+    try{
+      const r=await fetch(RAILWAY_URL+"/api/takeoff/catalog-index");
+      const d=await r.json();
+      CATALOG=(d&&d.ok&&d.groups)?d.groups:{};
+    }catch(e){ CATALOG={}; }
+    return CATALOG;
+  }
+  // Two comparisons on purpose. _mkey is the MEMBERSHIP test: case and padding don't matter, but
+  // spacing does — "L5x3x1/4" is not the catalog's "L5 x 3 x 1/4", and that exact drift is what
+  // arrives unresolved. _mnorm ignores spacing entirely and is used only to RANK suggestions, so
+  // the correctly-spaced string is the first thing offered.
+  const _mkey=function(s){ return String(s==null?"":s).trim().toUpperCase().replace(/\s+/g," "); };
+  const _mnorm=function(s){ return String(s==null?"":s).toUpperCase().replace(/\s+/g,"").replace(/[^A-Z0-9\/\-."]/g,""); };
+  function catGroup(r){
+    if(!CATALOG) return null;
+    const f=String(r.form_type||"").trim(), m=String(r.material_type||"").trim();
+    return CATALOG[f+"|"+m] || CATALOG[f+"|any material"] || null;
+  }
+  function nearestSizes(r,n){
+    const g=catGroup(r); if(!g||!g.length) return [];
+    const want=_mnorm(r.size);
+    if(!want) return g.slice(0,n||6);
+    return g.map(function(s){
+      const a=_mnorm(s); let score=0;
+      if(a===want) score=1;
+      else if(a.indexOf(want)===0||want.indexOf(a)===0) score=0.9;
+      else{ const L=Math.max(a.length,want.length); let same=0; for(let i=0;i<Math.min(a.length,want.length);i++) if(a[i]===want[i]) same++; score=same/L; }
+      return {s:s,score:score};
+    }).sort(function(x,y){ return y.score-x.score; }).slice(0,n||6).map(function(x){ return x.s; });
+  }
+  // Problems, worst first: no material at all, then a material the catalog doesn't have.
+  function materialProblems(rows){
+    if(!CATALOG) return [];
+    const out=[];
+    (rows||[]).forEach(function(r,idx){
+      if((Number(r.quantity)||0)<=0) return;                 // gap rows are reviewed as gaps
+      const g=catGroup(r);
+      const size=String(r.size||"").trim();
+      if(!size){ out.push({idx:idx,kind:"empty",row:r,options:g||[]}); return; }
+      if(!g){ out.push({idx:idx,kind:"nogroup",row:r,options:[]}); return; }
+      const hit=g.some(function(s){ return _mkey(s)===_mkey(size); });
+      if(!hit){
+        // Same size, different spacing — call it out as the near-miss it is, not a mystery.
+        const spacing=g.some(function(s){ return _mnorm(s)===_mnorm(size); });
+        out.push({idx:idx,kind:spacing?"spacing":"unknown",row:r,options:g});
+      }
+    });
+    return out;
+  }
+  function materialCardHtml(rows){
+    const probs=materialProblems(rows);
+    if(!CATALOG||!probs.length) return "";
+    const row=function(p){
+      const r=p.row;
+      const why = p.kind==="empty" ? "No material — the take-off couldn’t put a size to this member."
+        : p.kind==="nogroup" ? "No catalog sizes for <b>"+esc(r.form_type||"(no form type)")+" · "+esc(r.material_type||"(no material type)")+
+            "</b> — fix the form/material type first (via “Tell the AI”), then pick a size."
+        : p.kind==="spacing" ? "<b>"+esc(r.size)+"</b> is your catalog’s size written differently — the import matches on the "+
+            "exact string, so take the catalog spelling below."
+        : "<b>"+esc(r.size)+"</b> isn’t in your catalog for "+esc(r.form_type)+" · "+esc(r.material_type)+".";
+      const near=nearestSizes(r,5);
+      const opts=p.options.length
+        ? '<select id="matsel'+p.idx+'">'+p.options.map(function(s){
+            return '<option value="'+esc(s)+'"'+(near[0]===s?" selected":"")+">"+esc(s)+"</option>"; }).join("")+"</select>"+
+          ' <button class="applybtn" onclick="applyMaterial('+p.idx+')">Use this</button>'
+        : "";
+      const quick=near.slice(0,3).map(function(s){
+        return '<button class="applybtn" style="background:#fff;color:var(--ink);border:1px solid #cdd3da" '+
+          "onclick=\"applyMaterialValue("+p.idx+",'"+String(s).replace(/'/g,"\\'")+"')\">"+esc(s)+"</button>"; }).join(" ");
+      return '<div class="matrow"><div><b>'+esc(r.component||"—")+"</b> · "+esc(r.source_sheet||"no sheet")+
+        " · qty "+esc(r.quantity)+'</div><div class="src">'+why+"</div>"+
+        (quick?'<div class="matquick">Nearest in your catalog: '+quick+"</div>":"")+
+        (opts?'<div class="matquick">'+opts+"</div>":"")+"</div>";
+    };
+    return '<div class="card" style="border-color:#f3c2c2"><h2 style="color:var(--red)">⚠ Material check '+
+      '<span class="lt">— '+probs.length+" row"+(probs.length===1?"":"s")+" can’t import as-is</span></h2>"+
+      '<div class="body"><div class="src" style="margin-bottom:8px">These rows have no material, or a material that isn’t in '+
+      "your catalog. Fix them here and they’ll import clean — leave them and they land in staging as errors.</div>"+
+      probs.map(row).join("")+"</div></div>";
+  }
+  function applyMaterialValue(idx,val){
+    const R=loadResult(); if(!R.rows||!R.rows[idx]) return;
+    R.rows[idx].size=val;
+    if(!(Number(R.rows[idx].confidence)>0.5)) R.rows[idx].confidence=0.5;   // a human chose it
+    recomputeCsv(R); saveResult(R); render();
+  }
+  function applyMaterial(idx){
+    const sel=document.getElementById("matsel"+idx);
+    if(sel) applyMaterialValue(idx,sel.value);
+  }
+
   function recomputeCsv(R){ try{ R.import_csv=buildImportCsvJS(R.rows); }catch(e){} }
   function editQty(idx, val){ const R=loadResult(); if(!R.rows||!R.rows[idx]) return; R.rows[idx].quantity=Math.max(0,Number(val)||0); recomputeCsv(R); saveResult(R); render(); }
   function removeRow(idx){ const R=loadResult(); if(!R.rows||!R.rows[idx]) return; R.rows.splice(idx,1); recomputeCsv(R); saveResult(R); render(); }
@@ -1100,6 +1210,15 @@
         const names=un.slice(0,6).map(function(t){return "• "+t.value;}).join("\n")+(un.length>6?"\n…":"");
         if(!confirm(un.length+" component"+(un.length===1?"":"s")+" the drawings reference aren't on your project:\n\n"+names+"\n\nTheir material will import without a component link. Map or add them first, or continue anyway?")) return;
       }
+    }
+    // Material that can't resolve becomes an error row in staging — say so before committing.
+    const matProbs=materialProblems(arr(R.rows));
+    if(matProbs.length){
+      const list=matProbs.slice(0,6).map(function(p){
+        return "• "+(p.row.component||"—")+" · "+(p.row.form_type||"")+" · "+(p.row.size?('"'+p.row.size+'"'):"(no material)");
+      }).join("\n")+(matProbs.length>6?"\n…":"");
+      if(!confirm(matProbs.length+" row"+(matProbs.length===1?"":"s")+" have a material your catalog doesn't have:\n\n"+
+        list+"\n\nThey'll land in staging as errors. Fix them in the Material check card, or continue anyway?")) return;
     }
     const ap=document.getElementById("approve"); ap.disabled=true;
     const c=document.getElementById("commit"); c.style.display="block";
