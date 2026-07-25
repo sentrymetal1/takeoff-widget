@@ -113,6 +113,25 @@
     .comp .ibtn.del:hover { background:#fdeeee; color:#c0392b; }
     .comp .okbtn { border:0; background:var(--blue); color:#fff; cursor:pointer; font-size:11.5px;
                    font-weight:600; border-radius:5px; padding:6px 9px; white-space:nowrap; }
+    /* Coverage: every sheet in the PDF placed or deliberately left out, resolved in real time. */
+    .cov { margin-top:10px; border-radius:8px; padding:11px 13px 13px; border:1px solid; }
+    .cov.ok   { background:#eef8f0; border-color:#cfe8d6; }
+    .cov.open { background:#fff7ed; border-color:#fcd9a8; }
+    .cov .covttl { font-size:12.5px; font-weight:600; color:#2b3340; }
+    .cov .covsub { font-size:11.5px; color:#8a4b09; margin-top:3px; }
+    .covrow { background:#fff; border:1px solid #f0e2cc; border-radius:6px; padding:9px 10px; margin-top:8px; }
+    .covrow .covhd { font-size:12.5px; color:#2b3340; }
+    .covrow .covwhy, .cov > .covwhy { font-size:11.5px; color:#66707c; line-height:1.5; margin-top:3px; }
+    .covacts { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:7px; }
+    .covbtn { border:0; background:var(--blue); color:#fff; border-radius:5px; padding:5px 9px;
+              font-size:11.5px; font-weight:600; cursor:pointer; }
+    .covbtn.alt { background:#fff; color:#556; border:1px solid #cdd3da; font-weight:500; }
+    .covbtn.alt:hover { background:#f4f7fa; }
+    .covsel { padding:5px 6px; border:1px solid #cdd3da; border-radius:5px; font-size:11.5px; max-width:190px; }
+    .covex { margin-top:9px; font-size:11.5px; color:#66707c; }
+    .covex summary { cursor:pointer; }
+    .covexrow { display:flex; align-items:center; gap:8px; padding:4px 0 4px 12px; }
+    .covexrow .adesc { flex:1; }
     /* Pre-flight: what is about to be sent, confirmed on this screen before anything runs. */
     .preflight { margin-top:12px; border:1px solid #cfe0f2; border-radius:8px; background:#f7fafd; padding:12px 14px 14px; }
     .preflight .pfhd { font-size:12.5px; font-weight:700; color:#2b3340; margin-bottom:8px; }
@@ -121,6 +140,9 @@
                              padding:3px 10px; font-size:11.5px; color:#334; }
     .preflight .pfwarn { background:#fff7ed; border:1px solid #fcd9a8; color:#8a4b09; border-radius:6px;
                          padding:8px 10px; font-size:12px; line-height:1.5; margin-bottom:8px; }
+    .preflight .pfstop { background:#fdeeee; border:1px solid #f3c2c2; color:#a12727; border-radius:6px;
+                         padding:8px 10px; font-size:12px; line-height:1.5; margin-bottom:8px; }
+    .preflight .pfex { font-size:11.5px; color:#66707c; margin-top:7px; }
     .preflight .pflist { margin:0; padding-left:18px; font-size:12px; color:#445; }
     .preflight .pflist li { margin:2px 0; }
     .preflight .pfalt { margin-top:7px; text-align:center; font-size:11.5px; }
@@ -224,6 +246,7 @@
         <button type="button" class="addc" id="addComp">+ Add component</button>
         <button type="button" class="scanbtn" id="scanPdf" style="display:none">🔍 Preview the drawings in the PDF</button>
         <div id="allocPanel"></div>
+        <div id="coverage"></div>
       </div>
     </div>
 
@@ -235,7 +258,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.28 (2026-07-25)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.29 (2026-07-25)";
     // Railway base URL (the material-compass-nesting-app backend that hosts /api/takeoff).
     const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
     // ~32 MB upstream request cap; warn the user before they waste a click.
@@ -396,6 +419,13 @@
     let creating = null;                              // {ci,di} row swapped into "type the new value"
     let excluded = { c: {}, d: {} };                  // record ids left OUT of this take-off (local only)
     let allocPlan = null;                             // pending "here's what this does to the project" confirmation
+    let sheets = [];                                  // every drawing read out of the PDFs (survives the allocation)
+    let excludedSheets = [];                          // sheets deliberately left out: [{number,title,pages,reason}]
+    let aliases = {};                                 // PDF number (normalized) → the drawing number to use instead
+    const sheetKey = () => "mc_sheets_" + (params.project_id || "_");
+    function saveSheets() {
+      try { localStorage.setItem(sheetKey(), JSON.stringify({ sheets: sheets, excluded: excludedSheets, aliases: aliases })); } catch (e) {}
+    }
     const exclKey = () => "mc_excl_" + (params.project_id || "_");
     const descKey = () => "mc_desc_" + (params.project_id || "_");
     function escAttr(s) { return escHtml(s).replace(/"/g, "&quot;"); }
@@ -518,6 +548,7 @@
           "</div></div>";
       }).join("");
       host.innerHTML = ((!project.components.length && !project.unassigned.length) ? emptyScopeHtml() : "") + cards;
+      renderCoverage();          // scope changed ⇒ the accounted-for tally changed
     }
     function focusScopeInput(sel) {
       const el = document.querySelector("#scopeList " + sel);
@@ -812,14 +843,14 @@
         });
         const d = await r.json();
         if (!r.ok || d.ok === false) throw new Error((d && d.error) || ("HTTP " + r.status));
-        const sheets = Array.isArray(d.sheets) ? d.sheets : [];
+        const readSheets = Array.isArray(d.sheets) ? d.sheets : [];
         // The server parses the real page count out of each PDF — show it on the files.
         audit = d.audit || null;
         if (audit && Array.isArray(audit.docs)) {
           audit.docs.forEach((a, i) => { if (docs[i]) docs[i].pages = a.pages || 0; });
           renderFiles();
         }
-        detected = dedupeSheets(sheets.map((s) => ({
+        detected = dedupeSheets(readSheets.map((s) => ({
           doc: Number(s.doc) || 1,
           number: String(s.number || "").trim(),
           title: String(s.title || "").trim(),
@@ -828,6 +859,9 @@
           confidence: (s.confidence == null ? null : Number(s.confidence)),
           compIdx: guessComp(String(s.number || "")),
         })).filter((s) => s.number));
+        // Coverage tracks the same objects, so edits and drops in the grid follow through.
+        sheets = detected;
+        saveSheets();
         renderAlloc();
         if (!detected.length) {
           setScopeStatus("No drawing numbers found in the PDF — type them under a component instead.");
@@ -864,6 +898,7 @@
     }
 
     function renderAlloc() {
+      renderCoverage();                                    // the two panels always agree
       const host = document.getElementById("allocPanel");
       if (!detected.length && !audit) { host.innerHTML = ""; return; }
       if (!detected.length) {   // read happened but nothing usable came out — still show the tally
@@ -978,7 +1013,9 @@
         done++; tick(it.num);
       }
       detected.forEach((s) => { if (s.number) descMap[String(s.number).trim()] = s.title || ""; });
+      sheets = detected.slice();   // keep the read for the coverage check after the grid closes
       allocPlan = null; detected = [];
+      saveSheets();
       try { await loadProject(); } catch (e) { /* keep what we have */ }
       scopeFromProject(); saveScope(); renderScope(); renderAlloc();
       setScopeStatus((total - failed.length) + " of " + total + " drawing" + (total === 1 ? "" : "s") +
@@ -999,7 +1036,9 @@
         scope[ci].drawings = byCi[ci].map((it) => ({ id: (it.rec && it.rec.id) || "", number: it.num }));
       });
       detected.forEach((s) => { if (s.number) descMap[String(s.number).trim()] = s.title || ""; });
+      sheets = detected.slice();   // keep the read for the coverage check after the grid closes
       allocPlan = null; detected = [];
+      saveSheets();
       saveScope(); renderScope(); renderAlloc();
       setScopeStatus("Using the PDF's drawing numbers for this run only — they were NOT added to the project.");
     }
@@ -1113,6 +1152,16 @@
     function initScope() {
       try { const dm = JSON.parse(localStorage.getItem(descKey()) || "null"); if (dm && typeof dm === "object") descMap = dm; } catch (e) {}
       try { const ex = JSON.parse(localStorage.getItem(exclKey()) || "null"); if (ex && ex.c && ex.d) excluded = ex; } catch (e) {}
+      // Restore the last PDF read for this project so the coverage check (and the exclusions the
+      // user already decided) survive a reload — they're part of the take-off's audit trail.
+      try {
+        const st = JSON.parse(localStorage.getItem(sheetKey()) || "null");
+        if (st && Array.isArray(st.sheets)) {
+          sheets = st.sheets;
+          excludedSheets = Array.isArray(st.excluded) ? st.excluded : [];
+          aliases = (st.aliases && typeof st.aliases === "object") ? st.aliases : {};
+        }
+      } catch (e) {}
       pullProjectScope(false);
     }
     document.getElementById("reloadScope").addEventListener("click", (e) => { e.preventDefault(); pullProjectScope(true); });
@@ -1145,6 +1194,254 @@
       return data.import_id;
     }
 
+    // ---- COVERAGE — every sheet in the PDF must be accounted for ------------
+    // The drawing number is the spine: it ties a page of the PDF to a project drawing record, and
+    // every BOM row back to both. So nothing read off the PDF is allowed to just sit there — each
+    // sheet is either assigned to a component, or EXCLUDED on purpose with a reason that travels
+    // with the take-off. Where a number nearly matches, the user says which is right; the tool
+    // never guesses. Recomputed on every render, so the guidance is live as they type.
+    function lev(a, b) {                                   // classic edit distance, small strings
+      const m = a.length, n = b.length;
+      if (!m) return n; if (!n) return m;
+      let prev = Array.from({ length: n + 1 }, (_, j) => j), cur = new Array(n + 1);
+      for (let i = 1; i <= m; i++) {
+        cur[0] = i;
+        for (let j = 1; j <= n; j++) {
+          cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+        }
+        const t = prev; prev = cur; cur = t;
+      }
+      return prev[n];
+    }
+    function similar(a, b) {
+      if (!a || !b) return 0;
+      if (a === b) return 1;
+      return 1 - lev(a, b) / Math.max(a.length, b.length);
+    }
+    // Drawing numbers are SEGMENTED (I1-4800-2-10A-7), and a different segment means a different
+    // drawing — "10A-7" is not a near-miss of "10-1" however similar the strings look. So a near
+    // match is only ever: same segment count, exactly ONE segment differing, and that segment
+    // either a prefix of the other ("2" vs "2B") or a character-level typo of it ("10A" vs "1OA").
+    // Anything else is a separate drawing and gets treated as unaccounted for.
+    function segs(s) { return String(s || "").toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean); }
+    function nearMatch(a, b) {
+      const A = segs(a), B = segs(b);
+      if (!A.length || A.length !== B.length) return 0;
+      let diff = -1;
+      for (let i = 0; i < A.length; i++) {
+        if (A[i] === B[i]) continue;
+        if (diff > -1) return 0;                           // two segments differ ⇒ different drawing
+        diff = i;
+      }
+      if (diff < 0) return 1;                              // identical
+      const x = A[diff], y = B[diff];
+      if (x.indexOf(y) === 0 || y.indexOf(x) === 0) return 0.9;   // "2" vs "2B" — a sheet-suffix
+      const sim = similar(x, y);
+      return (sim >= 0.8 && Math.abs(x.length - y.length) <= 1) ? sim : 0;   // a typo in one segment
+    }
+    const NEAR = 0.8;                                      // below this it isn't a plausible typo
+
+    // A component name suggested from the sheet's own title: drop the words every sheet shares
+    // (the project/product prefix) and title-case what's left — "RIS 4800 INNOVATE CATWALK FLOOR"
+    // with siblings all starting "RIS 4800 INNOVATE" suggests "Catwalk Floor".
+    function commonPrefixWords() {
+      const lists = sheets.map((s) => String(s.title || "").toUpperCase().split(/\s+/).filter(Boolean));
+      if (lists.length < 2) return 0;
+      let n = 0;
+      for (;;) {
+        const w = lists[0][n];
+        if (!w || n >= 4) break;
+        if (!lists.every((l) => l[n] === w)) break;
+        n++;
+      }
+      return n;
+    }
+    function suggestComponent(title) {
+      const words = String(title || "").split(/\s+/).filter(Boolean);
+      const cut = words.slice(commonPrefixWords()).filter((w) => !/^\d+$/.test(w));
+      const pick = (cut.length ? cut : words).slice(0, 3);
+      return pick.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+    }
+
+    function scopeDrawIndex() {
+      const out = [];
+      scope.forEach((c, ci) => (c.drawings || []).forEach((d, di) => {
+        if (d && d.number) out.push({ ci: ci, di: di, id: d.id, number: d.number, comp: c.name, cid: c.cid });
+      }));
+      return out;
+    }
+    function coverage() {
+      const idx = scopeDrawIndex();
+      const exMap = {};
+      excludedSheets.forEach((x) => { exMap[_norm(x.number)] = x; });
+      const items = sheets.map((s) => {
+        const n = _norm(s.number);
+        if (exMap[n]) return { s: s, state: "excluded", ex: exMap[n] };
+        const exact = idx.find((x) => _norm(x.number) === n);
+        if (exact) return { s: s, state: "assigned", hit: exact };
+        if (aliases[n]) {
+          const al = idx.find((x) => _norm(x.number) === _norm(aliases[n]));
+          if (al) return { s: s, state: "assigned", hit: al, alias: aliases[n] };
+        }
+        let best = null, score = 0;
+        idx.forEach((x) => { const sc = nearMatch(x.number, s.number); if (sc > score) { score = sc; best = x; } });
+        if (best && score >= NEAR) return { s: s, state: "near", hit: best, score: score };
+        return { s: s, state: "missing" };
+      });
+      // The reverse check: a drawing you've selected that no uploaded PDF contains.
+      const inPdf = {};
+      sheets.forEach((s) => { inPdf[_norm(s.number)] = 1; });
+      const extras = sheets.length ? idx.filter((x) => !inPdf[_norm(x.number)] &&
+        !Object.keys(aliases).some((k) => _norm(aliases[k]) === _norm(x.number))) : [];
+      return {
+        items: items, extras: extras,
+        assigned: items.filter((i) => i.state === "assigned").length,
+        excluded: items.filter((i) => i.state === "excluded").length,
+        open: items.filter((i) => i.state === "missing" || i.state === "near"),
+      };
+    }
+
+    function compChoices(selected) {
+      const named = namedComps();
+      if (!named.length) return "";
+      return '<select class="covsel" data-k="covcomp">' +
+        named.map((x) => '<option value="' + x.i + '"' + (x.i === selected ? " selected" : "") + ">" +
+          escHtml(x.name) + "</option>").join("") + "</select>";
+    }
+
+    function renderCoverage() {
+      const host = document.getElementById("coverage");
+      if (!host) return;
+      if (!sheets.length) { host.innerHTML = ""; return; }
+      const cov = coverage();
+      const total = cov.items.length;
+      const done = cov.assigned + cov.excluded;
+      const ok = !cov.open.length;
+
+      const openRows = cov.open.map((it, i) => {
+        const k = sheets.indexOf(it.s);
+        const pg = (it.s.pages && it.s.pages.length)
+          ? "p." + it.s.pages[0] + (it.s.pages[1] && it.s.pages[1] !== it.s.pages[0] ? "–" + it.s.pages[1] : "") : "";
+        const sug = suggestComponent(it.s.title);
+        if (it.state === "near") {
+          return '<div class="covrow"><div class="covhd"><b>' + escHtml(it.s.number) + "</b> " +
+            '<span class="apg">' + pg + "</span></div>" +
+            '<div class="covwhy">The PDF says <b>' + escHtml(it.s.number) + "</b>, your project has <b>" +
+              escHtml(it.hit.number) + "</b> under " + escHtml(it.hit.comp) + " — close, but not the same. " +
+              "Say which is right so every row ties to one number.</div>" +
+            '<div class="covacts">' +
+              '<button type="button" class="covbtn" data-k="usepdf" data-i="' + k + '">Use the PDF’s number</button>' +
+              '<button type="button" class="covbtn alt" data-k="alias" data-i="' + k + '">They’re the same — keep “' +
+                escHtml(it.hit.number) + '”</button>' +
+              '<button type="button" class="covbtn alt" data-k="excl" data-i="' + k + '">Leave this sheet out…</button>' +
+            "</div></div>";
+        }
+        return '<div class="covrow"><div class="covhd"><b>' + escHtml(it.s.number) + "</b> " +
+          '<span class="adesc">' + escHtml(it.s.title || "") + '</span> <span class="apg">' + pg + "</span></div>" +
+          '<div class="covwhy">This sheet isn’t on any component yet. Put it under one (it’s added to the project ' +
+            "with this exact number), or leave it out on purpose." +
+            (sug ? " The title suggests a component called <b>" + escHtml(sug) + "</b>." : "") + "</div>" +
+          '<div class="covacts">' +
+            (namedComps().length
+              ? compChoices(namedComps()[0].i) + '<button type="button" class="covbtn" data-k="assign" data-i="' + k + '">Add under this component</button>'
+              : '<span class="apg">pick or add a component above first</span>') +
+            (sug ? '<button type="button" class="covbtn alt" data-k="newcomp" data-i="' + k + '" data-name="' + escAttr(sug) +
+              '">＋ New component “' + escHtml(sug) + '”</button>' : "") +
+            '<button type="button" class="covbtn alt" data-k="excl" data-i="' + k + '">Leave this sheet out…</button>' +
+          "</div></div>";
+      }).join("");
+
+      const exList = excludedSheets.length
+        ? '<details class="covex"><summary>' + excludedSheets.length + " sheet" + (excludedSheets.length === 1 ? "" : "s") +
+            " deliberately left out — carried through the whole take-off</summary>" +
+          excludedSheets.map((x, i) => '<div class="covexrow"><b>' + escHtml(x.number) + "</b> " +
+            '<span class="adesc">' + escHtml(x.reason || "") + "</span>" +
+            '<button type="button" class="covbtn alt" data-k="unexcl" data-i="' + i + '">put back</button></div>').join("") +
+          "</details>"
+        : "";
+
+      const extras = cov.extras.length
+        ? '<div class="covwhy" style="margin-top:8px">⚠ ' + cov.extras.length + " selected drawing" +
+          (cov.extras.length === 1 ? "" : "s") + " (" + escHtml(cov.extras.slice(0, 6).map((x) => x.number).join(", ")) +
+          ") " + (cov.extras.length === 1 ? "isn’t" : "aren’t") + " in the PDFs you loaded — upload the missing PDF, " +
+          "or ✕ them out of this take-off.</div>"
+        : "";
+
+      host.innerHTML = '<div class="cov ' + (ok ? "ok" : "open") + '">' +
+        '<div class="covttl">' + (ok ? "✓ " : "◷ ") + "All drawings accounted for: <b>" + done + " of " + total + "</b>" +
+          (cov.excluded ? " (" + cov.assigned + " on components, " + cov.excluded + " left out)" : "") +
+          (ok ? "" : " — <b>" + cov.open.length + " still to resolve</b>") + "</div>" +
+        (ok ? "" : '<div class="covsub">Nothing from these sheets will reach the take-off until each one is placed or ' +
+          "left out on purpose.</div>") +
+        openRows + extras + exList +
+      "</div>";
+    }
+
+    // Coverage actions — each one resolves an open sheet, and each one is explicit.
+    document.getElementById("coverage").addEventListener("click", async (e) => {
+      const btn = e.target.closest("button"); if (!btn) return;
+      const k = btn.getAttribute("data-k"), i = Number(btn.getAttribute("data-i"));
+      if (k === "unexcl") { excludedSheets.splice(i, 1); saveSheets(); renderCoverage(); return; }
+      const sheet = sheets[i];
+      if (!sheet) return;
+      if (k === "excl") {
+        const reason = window.prompt("Leave " + sheet.number + " out of this take-off.\n\n" +
+          "Why? (carried through the take-off, so the AI skips it and the reason shows on the review)",
+          "Not in this scope of work");
+        if (reason == null) return;
+        excludedSheets.push({ number: sheet.number, title: sheet.title || "",
+          pages: sheet.pages || [], reason: String(reason).trim() || "Excluded by the estimator" });
+        saveSheets(); renderCoverage();
+        return;
+      }
+      if (k === "usepdf") {                                 // rename the project record to the PDF's number
+        const cov = coverage();
+        const it = cov.items.find((x) => x.s === sheet);
+        if (!it || !it.hit || !it.hit.id) return;
+        setScopeStatus('<span class="spin"></span>Renaming ' + escHtml(it.hit.number) + " to " + escHtml(sheet.number) + " on the project…");
+        try {
+          await scopeApi("update", { kind: "drawing", id: it.hit.id, value: sheet.number });
+          await loadProject(); scopeFromProject(); renderScope(); renderCoverage();
+          setScopeStatus("Renamed to " + escHtml(sheet.number) + " on the project — it now matches the sheet.");
+        } catch (err) { setScopeStatus("Rename failed: " + escHtml(err.message || err)); }
+        return;
+      }
+      if (k === "alias") {                                  // keep their number, record the tie
+        const cov = coverage();
+        const it = cov.items.find((x) => x.s === sheet);
+        if (!it || !it.hit) return;
+        aliases[_norm(sheet.number)] = it.hit.number;
+        saveSheets(); renderCoverage();
+        setScopeStatus("Tied sheet " + escHtml(sheet.number) + " to your drawing " + escHtml(it.hit.number) +
+          " — the take-off will use your number.");
+        return;
+      }
+      if (k === "assign" || k === "newcomp") {
+        if (!params.project_id) { setScopeStatus("Open the take-off from the project page to add records."); return; }
+        let ci;
+        if (k === "newcomp") {
+          const name = btn.getAttribute("data-name");
+          setScopeStatus('<span class="spin"></span>Adding component “' + escHtml(name) + "” to the project…");
+          try {
+            const out = await scopeApi("add", { project_id: params.project_id, kind: "component", value: name });
+            await loadProject(); scopeFromProject(); renderScope();
+            ci = scope.findIndex((c) => String(c.cid) === String(out.id));
+          } catch (err) { setScopeStatus("Could not add the component: " + escHtml(err.message || err)); return; }
+        } else {
+          const sel = btn.parentElement && btn.parentElement.querySelector('[data-k="covcomp"]');
+          ci = Number(sel && sel.value);
+        }
+        if (ci == null || ci < 0 || !scope[ci] || !scope[ci].cid) { setScopeStatus("Pick a component first."); return; }
+        setScopeStatus('<span class="spin"></span>Adding ' + escHtml(sheet.number) + " under " + escHtml(scope[ci].name) + "…");
+        try {
+          await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: sheet.number, component_id: scope[ci].cid });
+          descMap[sheet.number] = sheet.title || "";
+          await loadProject(); scopeFromProject(); renderScope(); renderCoverage(); saveScope();
+          setScopeStatus(escHtml(sheet.number) + " added to the project under " + escHtml(scope[ci].name) + ".");
+        } catch (err) { setScopeStatus("Could not add the drawing: " + escHtml(err.message || err)); }
+      }
+    });
+
     // ---- PRE-FLIGHT ---------------------------------------------------------
     // The full take-off costs money and takes a minute, and it can only be as good as the scope it
     // is handed. So "Run" doesn't run: it lays out exactly what is about to be sent — the drawings
@@ -1159,9 +1456,16 @@
       // Read off the PDF but not in the scope being sent — the exact mismatch worth catching here.
       const unallocated = detected.filter((s) => s.number && !inScope[_norm(s.number)]).map((s) => s.number);
       const empties = tree.filter((c) => !c.drawings.length).map((c) => c.component);
+      const cov = sheets.length ? coverage() : null;
+      const blockers = [];
       const warn = [];
       if (!audit) warn.push("You haven’t previewed the PDF yet — <b>Preview the drawings</b> first so the drawing numbers " +
         "in the take-off match the sheets.");
+      // Hard stop: a sheet nobody has placed or deliberately left out would be read blind.
+      if (cov && cov.open.length) blockers.push(cov.open.length + " drawing" + (cov.open.length === 1 ? "" : "s") +
+        " from the PDF " + (cov.open.length === 1 ? "is" : "are") + " neither on a component nor left out on purpose: <b>" +
+        escHtml(cov.open.slice(0, 8).map((x) => x.s.number).join(", ")) + (cov.open.length > 8 ? " …" : "") +
+        "</b> — resolve them under <b>All drawings accounted for</b> above.");
       if (unallocated.length) warn.push(unallocated.length + " drawing" + (unallocated.length === 1 ? "" : "s") +
         " read from the PDF " + (unallocated.length === 1 ? "is" : "are") + " not in the scope below: <b>" +
         escHtml(unallocated.slice(0, 8).join(", ")) + (unallocated.length > 8 ? " …" : "") + "</b>");
@@ -1174,18 +1478,25 @@
         + "</li>").join("");
 
       return '<div class="preflight">' +
-        '<div class="pfhd">Ready to run — check this before it reads the drawings</div>' +
+        '<div class="pfhd">' + (blockers.length ? "Not ready yet" : "Ready to run") +
+          " — check this before it reads the drawings</div>" +
         '<div class="pfrow">' +
           "<span><b>" + docs.length + "</b> file" + (docs.length === 1 ? "" : "s") + "</span>" +
           (pages ? "<span><b>" + pages + "</b> pages</span>" : "") +
-          (audit ? "<span><b>" + detected.length + "</b> drawings in the PDF</span>" : "") +
+          (sheets.length ? "<span><b>" + sheets.length + "</b> drawings in the PDF</span>" : "") +
           "<span><b>" + tree.length + "</b> component" + (tree.length === 1 ? "" : "s") + "</span>" +
           "<span><b>" + drawings + "</b> drawings in scope</span>" +
+          (excludedSheets.length ? "<span><b>" + excludedSheets.length + "</b> left out on purpose</span>" : "") +
         "</div>" +
+        (blockers.length ? '<div class="pfstop">' + blockers.map((b) => "<div>⛔ " + b + "</div>").join("") + "</div>" : "") +
         (warn.length ? '<div class="pfwarn">' + warn.map((w) => "<div>⚠ " + w + "</div>").join("") + "</div>" : "") +
         "<ul class=\"pflist\">" + list + (tree.length > 12 ? "<li>…</li>" : "") + "</ul>" +
-        '<button type="button" class="go" id="goConfirm" style="margin-top:10px">▶ Start the full take-off</button>' +
-        '<div class="pfalt"><a href="#" id="goCancel">cancel — keep editing</a></div>' +
+        (excludedSheets.length ? '<div class="pfex">Left out (the take-off is told to skip these, and why): ' +
+          escHtml(excludedSheets.slice(0, 8).map((x) => x.number).join(", ")) + "</div>" : "") +
+        (blockers.length
+          ? '<div class="pfalt"><a href="#" id="goCancel">close and resolve them above</a></div>'
+          : '<button type="button" class="go" id="goConfirm" style="margin-top:10px">▶ Start the full take-off</button>' +
+            '<div class="pfalt"><a href="#" id="goCancel">cancel — keep editing</a></div>') +
       "</div>";
     }
 
@@ -1224,6 +1535,13 @@
             pdfs: docs.map((d) => d.b64),
             model: document.getElementById("model").value,
             scope_tree: buildScopeTree(),   // user-arranged components → drawings (authoritative; [] ⇒ server falls back)
+            // Everything the estimator decided about coverage travels with the run: which sheets to
+            // skip and why, and any sheet whose number on the drawing differs from the project's.
+            excluded_drawings: excludedSheets.map((x) => ({ number: x.number, title: x.title, reason: x.reason })),
+            drawing_aliases: Object.keys(aliases).map((k) => {
+              const s = sheets.find((z) => _norm(z.number) === k);
+              return { pdf_number: s ? s.number : k, use_number: aliases[k] };
+            }),
           }),
         });
         const data = await r.json();
