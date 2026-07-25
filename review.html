@@ -980,7 +980,7 @@
       const R2=loadResult(); R2.chat=(R2.chat||[]).filter(function(m){return !m.pending;});
       if(!r.ok||data.ok===false){
         const m=String(data.error||("HTTP "+r.status));
-        const friendly=(m.indexOf("rate_limit")>-1||m.indexOf("429")>-1)?"Anthropic rate limit hit — wait ~60s and try again.":m;
+        const friendly=(m.indexOf("rate_limit")>-1||m.indexOf("429")>-1)?"Material Compass AI is rate limited — wait ~60s and try again.":m;
         R2.chat.push({role:"ai", err:true, text:"⚠ "+friendly}); saveResult(R2); render(); scrollChatToBottom(); window.__chatting=false; return;
       }
       if(data.edited){
@@ -1047,7 +1047,7 @@
         stop(); reenable();
         const m=String(data.error||("HTTP "+r.status));
         const friendly = m.indexOf("rate_limit")>-1 || m.indexOf("429")>-1
-          ? "Anthropic rate limit hit — wait ~60s and try again (or raise your usage tier)."
+          ? "Material Compass AI is rate limited — wait ~60s and try again."
           : esc(m);
         setBusy("⚠ Revise failed: "+friendly,"err"); clearBusy(8000); return;
       }
