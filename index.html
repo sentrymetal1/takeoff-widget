@@ -379,9 +379,12 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.36 (2026-07-26)";
-    // Railway base URL (the material-compass-nesting-app backend that hosts /api/takeoff).
-    const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.37 (2026-07-26)";
+    // The Material Compass backend that hosts /api/takeoff. When this page is SERVED by that
+    // backend (the /takeoff/ URL) the calls are same-origin, so leave the base empty and skip CORS
+    // entirely; the absolute URL is only needed by the GitHub Pages copy.
+    const MC_HOST = "https://material-compass-nesting-app-production.up.railway.app";
+    const RAILWAY_URL = /(^|\.)up\.railway\.app$|^localhost$/.test(location.hostname) ? "" : MC_HOST;
     // ~32 MB upstream request cap; warn the user before they waste a click.
     const MAX_MB = 32;
 
