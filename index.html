@@ -22,14 +22,19 @@
     .sub { color:#667; font-size:13px; margin:0 0 20px; max-width:820px; }
     /* Two working columns: documents/model on the left, the scope tree + PDF allocation on the
        right (it's the tall one). Collapses to a single column on narrow screens. */
-    .cols { display:grid; grid-template-columns:minmax(300px,0.85fr) minmax(420px,1.15fr);
-            gap:26px; align-items:start; }
+    /* Documents · the scope editor · what's still open — the open items sit next to the list they
+       get added to. Drops to 2 columns (the open items go full width) then 1 as the window narrows. */
+    .cols { display:grid; grid-template-columns:minmax(250px,0.72fr) minmax(380px,1.15fr) minmax(290px,1fr);
+            gap:24px; align-items:start; }
+    @media (max-width:1250px) {
+      .cols { grid-template-columns:minmax(250px,0.8fr) minmax(380px,1.2fr); }
+      .cols > #covCol { grid-column:1 / -1; }
+    }
     @media (max-width:900px) { .cols { grid-template-columns:1fr; gap:20px; } }
     /* The three read-out panels: equal columns, each scrolling independently so a 27-drawing
        list can't push the other two off the screen. Collapses 3 → 2 → 1 as the window narrows. */
-    .panels { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:18px;
-              align-items:start; margin-top:22px; }
-    @media (max-width:1250px) { .panels { grid-template-columns:repeat(2, minmax(0,1fr)); } }
+    .panels { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:20px;
+              align-items:start; margin-top:24px; }
     @media (max-width:820px)  { .panels { grid-template-columns:1fr; } }
     .panels:empty, .panel:empty { display:none; }
     .panel { min-width:0; }
@@ -272,11 +277,17 @@
         <button type="button" class="addc" id="addComp">+ Add component</button>
         <button type="button" class="scanbtn" id="scanPdf" style="display:none">🔍 Preview the drawings in the PDF</button>
       </div>
+
+      <!-- Sits beside the scope editor on purpose: every action here lands in the component list
+           immediately to its left, so the two are worked as a pair. -->
+      <div class="panel" id="covCol">
+        <div class="ptl">Still to resolve</div>
+        <div class="pbody" id="coverage"></div>
+      </div>
     </div>
 
-    <!-- What the PDF read produced. Three independent panels read TOGETHER — what's in the PDF ·
-         what it suggests · what's still open — so they sit side by side instead of stacking into
-         one long scroll. Each column scrolls on its own when its list is long. -->
+    <!-- The read itself: what's in the PDF, and what it proposes. Side by side, each scrolling
+         on its own so one long list can't push the other off the screen. -->
     <div class="panels" id="panels">
       <div class="panel">
         <div class="ptl">Drawings found in the PDF</div>
@@ -285,10 +296,6 @@
       <div class="panel">
         <div class="ptl">Suggested breakdown</div>
         <div class="pbody" id="suggest"></div>
-      </div>
-      <div class="panel">
-        <div class="ptl">Still to resolve</div>
-        <div class="pbody" id="coverage"></div>
       </div>
     </div>
 
@@ -300,7 +307,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.32 (2026-07-26)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.33 (2026-07-26)";
     // Railway base URL (the material-compass-nesting-app backend that hosts /api/takeoff).
     const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
     // ~32 MB upstream request cap; warn the user before they waste a click.
@@ -1493,18 +1500,18 @@
     // Show the three-panel row only when there's something in it, and hide an empty column so the
     // remaining panels take the full width instead of leaving a gap.
     function updatePanels() {
-      const ids = ["allocPanel", "suggest", "coverage"];
-      let any = false;
-      ids.forEach((id) => {
+      const show = (id) => {
         const el = document.getElementById(id);
-        if (!el) return;
+        if (!el) return false;
         const has = !!el.innerHTML.trim();
-        if (has) any = true;
         const col = el.closest(".panel");
         if (col) col.style.display = has ? "block" : "none";
-      });
+        return has;
+      };
+      const a = show("allocPanel"), s = show("suggest");
+      show("coverage");                                    // lives beside the scope editor, not in the row
       const row = document.getElementById("panels");
-      if (row) row.style.display = any ? "grid" : "none";
+      if (row) row.style.display = (a || s) ? "grid" : "none";
     }
 
     function renderCoverage() {
