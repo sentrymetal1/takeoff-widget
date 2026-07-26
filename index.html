@@ -162,6 +162,9 @@
     .covbtn.alt { background:#fff; color:#556; border:1px solid #cdd3da; font-weight:500; }
     .covbtn.alt:hover { background:#f4f7fa; }
     .covsel { padding:5px 6px; border:1px solid #cdd3da; border-radius:5px; font-size:11.5px; max-width:190px; }
+    .covbulk { background:#fff; border:1px solid #f0e2cc; border-radius:6px; padding:8px 10px; margin-top:8px;
+               display:flex; flex-wrap:wrap; align-items:center; gap:6px; font-size:11.5px; color:#334; }
+    .covbulk .covwhy { flex-basis:100%; margin-top:2px; }
     .covex { margin-top:9px; font-size:11.5px; color:#66707c; }
     .covex summary { cursor:pointer; }
     .covexrow { display:flex; align-items:center; gap:8px; padding:4px 0 4px 12px; }
@@ -333,7 +336,7 @@
     <div class="cols">
       <div class="scope" id="scope">
         <div class="secttl">
-          <span><span class="n">2 ·</span> Components &amp; drawings</span>
+          <span>Components &amp; drawings</span>
           <a class="reload" id="reloadScope" title="Re-pull the project's components &amp; drawings">↻ Reload from project</a>
         </div>
         <div class="lbl">
@@ -376,7 +379,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.35 (2026-07-26)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.36 (2026-07-26)";
     // Railway base URL (the material-compass-nesting-app backend that hosts /api/takeoff).
     const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
     // ~32 MB upstream request cap; warn the user before they waste a click.
@@ -1382,9 +1385,12 @@
       }
       if (diff < 0) return 1;                              // identical
       const x = A[diff], y = B[diff];
-      if (x.indexOf(y) === 0 || y.indexOf(x) === 0) return 0.9;   // "2" vs "2B" — a sheet-suffix
+      // A prefix relation only means "same drawing, extra sheet suffix" on the LAST segment
+      // ("…-2" vs "…-2B"). Mid-number it's a different family entirely: 10B-1 is NOT 10-1, and
+      // treating it as one was offering to rename a drawing into a different drawing.
+      if (diff === A.length - 1 && (x.indexOf(y) === 0 || y.indexOf(x) === 0)) return 0.9;
       const sim = similar(x, y);
-      return (sim >= 0.8 && Math.abs(x.length - y.length) <= 1) ? sim : 0;   // a typo in one segment
+      return (sim >= 0.8 && x.length === y.length) ? sim : 0;   // a one-character typo in one segment
     }
     const NEAR = 0.8;                                      // below this it isn't a plausible typo
 
@@ -1421,6 +1427,10 @@
       const idx = scopeDrawIndex();
       const exMap = {};
       excludedSheets.forEach((x) => { exMap[_norm(x.number)] = x; });
+      // Drawings that a sheet in this PDF matches exactly — those records are spoken for.
+      const claimed = {};
+      sheets.forEach((s) => { if (s.number) claimed[_norm(s.number)] = 1; });
+
       const items = sheets.map((s) => {
         const n = _norm(s.number);
         if (exMap[n]) return { s: s, state: "excluded", ex: exMap[n] };
@@ -1430,8 +1440,16 @@
           const al = idx.find((x) => _norm(x.number) === _norm(aliases[n]));
           if (al) return { s: s, state: "assigned", hit: al, alias: aliases[n] };
         }
+        // Never propose a near-match against a drawing that another sheet in this PDF matches
+        // exactly — "use the PDF's number" would rename that drawing out from under the sheet that
+        // owns it, which put the other sheet back into the unresolved list. That's how the same
+        // question kept coming back.
         let best = null, score = 0;
-        idx.forEach((x) => { const sc = nearMatch(x.number, s.number); if (sc > score) { score = sc; best = x; } });
+        idx.forEach((x) => {
+          if (claimed[_norm(x.number)]) return;
+          const sc = nearMatch(x.number, s.number);
+          if (sc > score) { score = sc; best = x; }
+        });
         if (best && score >= NEAR) return { s: s, state: "near", hit: best, score: score };
         return { s: s, state: "missing" };
       });
@@ -1532,6 +1550,52 @@
         setScopeStatus("Took the suggested breakdown. Review it below — it's all editable.");
       }
     });
+
+    // Every unplaced sheet under one component, in one go. Writes one drawing record per sheet (the
+    // same call the per-row button makes), reporting progress because it's N Zoho writes, not one.
+    async function bulkAssign() {
+      if (!params.project_id) { setScopeStatus("Open the take-off from the project page to add records."); return; }
+      const sel = document.getElementById("bulkComp");
+      const ci = Number(sel && sel.value);
+      if (!scope[ci] || !scope[ci].cid) { setScopeStatus("Pick a component first."); return; }
+      const list = coverage().open.filter((x) => x.state === "missing").map((x) => x.s);
+      if (!list.length) return;
+      if (!window.confirm("Add all " + list.length + " unplaced drawing" + (list.length === 1 ? "" : "s") +
+        " to the project under “" + scope[ci].name + "”?\n\nThat creates " + list.length +
+        " drawing record" + (list.length === 1 ? "" : "s") + " on the project.")) return;
+      const failed = [];
+      for (let n = 0; n < list.length; n++) {
+        const s = list[n];
+        setScopeStatus('<span class="spin"></span>Adding to “' + escHtml(scope[ci].name) + "”… " +
+          (n + 1) + "/" + list.length + " · " + escHtml(s.number));
+        try {
+          const rec = findDrawingByNumber(s.number);
+          if (rec && !rec.owner) await scopeApi("update", { kind: "drawing", id: rec.id, value: s.number, component_id: scope[ci].cid });
+          else if (!rec) await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: s.number, component_id: scope[ci].cid });
+          descMap[s.number] = s.title || "";
+        } catch (err) { failed.push(s.number); }
+      }
+      await loadProject(); scopeFromProject(); saveScope(); renderScope();
+      setScopeStatus((list.length - failed.length) + " of " + list.length + " added under “" +
+        escHtml(scope[ci].name) + "”." + (failed.length ? ' <span style="color:#b45309">Failed: ' +
+        escHtml(failed.slice(0, 5).join(", ")) + "</span>" : ""));
+    }
+
+    // The mirror image: leave every unplaced sheet out, one reason for the lot.
+    function bulkExclude() {
+      const list = coverage().open.filter((x) => x.state === "missing").map((x) => x.s);
+      if (!list.length) return;
+      const reason = window.prompt("Leave all " + list.length + " unplaced drawing" + (list.length === 1 ? "" : "s") +
+        " out of this take-off.\n\nWhy? (carried through the take-off, so the AI skips them)",
+        "Not in this scope of work");
+      if (reason == null) return;
+      list.forEach((s) => {
+        excludedSheets.push({ number: s.number, title: s.title || "", pages: s.pages || [],
+          reason: String(reason).trim() || "Excluded by the estimator" });
+      });
+      saveSheets(); renderCoverage();
+      setScopeStatus(list.length + " drawing" + (list.length === 1 ? "" : "s") + " left out — the take-off is told to skip them.");
+    }
 
     // Create (or reuse) the component, then file its drawings under it — on the project, so the
     // take-off and the project agree. Same endpoints as every other add on this screen.
@@ -1645,12 +1709,32 @@
           "or ✕ them out of this take-off.</div>"
         : "";
 
+      // Bulk bar: 20-odd sheets that all belong to one component shouldn't need 20 clicks. Only the
+      // UNPLACED ones go in bulk — a near-miss number is a decision about which number is right, so
+      // it stays per-row rather than being swept up silently.
+      const unplaced = cov.open.filter((x) => x.state === "missing");
+      const nearCount = cov.open.length - unplaced.length;
+      const named = namedComps();
+      const bulk = (unplaced.length > 1 && named.length)
+        ? '<div class="covbulk"><b>All ' + unplaced.length + " at once:</b> " +
+            '<select class="covsel" id="bulkComp">' +
+              named.map((x) => '<option value="' + x.i + '">' + escHtml(x.name) + "</option>").join("") +
+            "</select>" +
+            '<button type="button" class="covbtn" data-k="bulkadd">Add all ' + unplaced.length + " here</button>" +
+            '<button type="button" class="covbtn alt" data-k="bulkout">Leave all ' + unplaced.length + " out…</button>" +
+            (nearCount ? '<div class="covwhy">' + nearCount + " number" + (nearCount === 1 ? "" : "s") +
+              " that nearly match one of yours " + (nearCount === 1 ? "is" : "are") + " left below — those need your call.</div>" : "") +
+          "</div>"
+        : "";
+      const reopen = (suggestDismissed && sheets.length)
+        ? '<div class="covwhy"><a href="#" data-k="showsug">show the suggested breakdown again</a></div>' : "";
+
       host.innerHTML = '<div class="cov ' + (ok ? "ok" : "open") + '">' +
         '<div class="covttl">' + (ok ? "✓ " : "◷ ") + "All drawings accounted for: <b>" + done + " of " + total + "</b>" +
           (cov.excluded ? " (" + cov.assigned + " on components, " + cov.excluded + " left out)" : "") +
           (ok ? "" : " — <b>" + cov.open.length + " still to resolve</b>") + "</div>" +
         (ok ? "" : '<div class="covsub">Nothing from these sheets will reach the take-off until each one is placed or ' +
-          "left out on purpose.</div>") +
+          "left out on purpose.</div>") + bulk + reopen +
         openRows + extras + exList +
       "</div>";
       updatePanels();
@@ -1658,9 +1742,12 @@
 
     // Coverage actions — each one resolves an open sheet, and each one is explicit.
     document.getElementById("coverage").addEventListener("click", async (e) => {
-      const btn = e.target.closest("button"); if (!btn) return;
+      const btn = e.target.closest("[data-k]"); if (!btn) return;   // buttons AND the reopen link
       const k = btn.getAttribute("data-k"), i = Number(btn.getAttribute("data-i"));
       if (k === "unexcl") { excludedSheets.splice(i, 1); saveSheets(); renderCoverage(); return; }
+      if (k === "showsug") { e.preventDefault(); suggestDismissed = false; renderCoverage(); return; }
+      if (k === "bulkadd") { await bulkAssign(); return; }
+      if (k === "bulkout") { bulkExclude(); return; }
       const sheet = sheets[i];
       if (!sheet) return;
       if (k === "excl") {
@@ -1677,6 +1764,15 @@
         const cov = coverage();
         const it = cov.items.find((x) => x.s === sheet);
         if (!it || !it.hit || !it.hit.id) return;
+        // Last line of defence: if some other sheet in this PDF IS that drawing, renaming it would
+        // take the number away from that sheet. Add a new drawing instead of moving an existing one.
+        const owner = sheets.find((z) => z !== sheet && _norm(z.number) === _norm(it.hit.number));
+        if (owner) {
+          setScopeStatus("Not renamed — " + escHtml(it.hit.number) + " is its own sheet in this PDF (p." +
+            ((owner.pages || [])[0] || "?") + "). Add " + escHtml(sheet.number) + " as its own drawing instead.");
+          renderCoverage();
+          return;
+        }
         setScopeStatus('<span class="spin"></span>Renaming ' + escHtml(it.hit.number) + " to " + escHtml(sheet.number) + " on the project…");
         try {
           await scopeApi("update", { kind: "drawing", id: it.hit.id, value: sheet.number });
