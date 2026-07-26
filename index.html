@@ -211,8 +211,9 @@
   <div class="card">
     <h1>AI Material Take-off</h1>
     <p class="sub">Upload the project drawings + Division-05 spec (PDF — you can select several:
-       S sheets, A sheets, and the Metals spec). Material Compass AI reads the members and builds
-       an importable BOM. Keep the combined size under ~32 MB.</p>
+       S sheets, A sheets, and the Metals spec). As soon as they're in, Material Compass AI reads the
+       title blocks and suggests how the drawings break down into components — take it, edit it, or
+       ignore it. Nothing is taken off until you start the run. Keep the combined size under ~32 MB.</p>
 
     <div id="resume" style="display:none;margin:0 0 16px;padding:11px 13px;background:#f0f6fc;
          border:1px solid #cfe0f2;border-radius:8px;font-size:13px;color:#334;">
@@ -271,7 +272,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.30 (2026-07-26)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.31 (2026-07-26)";
     // Railway base URL (the material-compass-nesting-app backend that hosts /api/takeoff).
     const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
     // ~32 MB upstream request cap; warn the user before they waste a click.
@@ -383,6 +384,7 @@
       }
       if (added) invalidateScan();
       renderFiles();
+      maybeAutoPreview();          // read the drawings without waiting to be asked
       statusEl.textContent = dupes ? (dupes + " file" + (dupes > 1 ? "s" : "") + " already added — skipped.") : "";
     }
 
@@ -843,11 +845,34 @@
 
     function updateScanBtn() {
       const b = document.getElementById("scanPdf");
-      if (b) b.style.display = docs.length ? "block" : "none";
+      if (!b) return;
+      b.style.display = docs.length ? "block" : "none";
+      // Once a read exists the button is a re-read, not the first step — say so.
+      b.textContent = sheets.length ? "↻ Re-read the drawings in the PDF" : "🔍 Preview the drawings in the PDF";
+    }
+
+    // The preview runs itself once the files settle — it's the read every user was going to click
+    // anyway, and the suggestions are only useful before they start building the scope by hand.
+    // Debounced so adding three files is one read, not three; keyed on the file set so the same
+    // upload is never read twice; skipped when the set is over the size cap (it would just fail).
+    let autoTimer = null, autoDone = {}, scanning = false;
+    const fileSig = () => docs.map((d) => d.key).sort().join("|");
+    function maybeAutoPreview() {
+      if (!docs.length) return;
+      const sig = fileSig();
+      if (autoDone[sig] || scanning) return;
+      if (docs.reduce((s, d) => s + d.mb, 0) > MAX_MB) return;
+      clearTimeout(autoTimer);
+      autoTimer = setTimeout(() => {
+        if (scanning || autoDone[fileSig()]) return;
+        scanPdf();
+      }, 1200);
     }
 
     async function scanPdf() {
-      if (!docs.length) return;
+      if (!docs.length || scanning) return;
+      scanning = true;
+      autoDone[fileSig()] = 1;
       const btn = document.getElementById("scanPdf");
       btn.disabled = true;
       setScopeStatus('<span class="spin"></span>Reading drawing numbers from the PDF…');
@@ -887,8 +912,9 @@
           detected.length + " drawing" + (detected.length === 1 ? "" : "s") +
           (d.cost_usd != null ? " ($" + d.cost_usd + ")" : "") + ". Confirm how they're allocated below.");
       } catch (e) {
-        setScopeStatus("Couldn't read the PDF (" + (e.message || e) + "). You can still type drawings manually.");
-      } finally { btn.disabled = false; }
+        setScopeStatus("Couldn’t read the PDF (" + (e.message || e) + "). Use ↻ to try again, or pick the " +
+          "components and drawings yourself below.");
+      } finally { scanning = false; btn.disabled = false; updateScanBtn(); }
     }
 
     // What "Use this allocation" is about to do to the project, spelled out before it does it.
