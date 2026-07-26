@@ -113,6 +113,18 @@
     .comp .ibtn.del:hover { background:#fdeeee; color:#c0392b; }
     .comp .okbtn { border:0; background:var(--blue); color:#fff; cursor:pointer; font-size:11.5px;
                    font-weight:600; border-radius:5px; padding:6px 9px; white-space:nowrap; }
+    /* Suggested breakdown: the AI's proposed components with their drawings — take it or leave it. */
+    .sug { margin-top:10px; border:1px solid #cfe0f2; border-radius:8px; background:#f7fafd; padding:11px 13px 13px; }
+    .sug .sugttl { font-size:12.5px; font-weight:700; color:#2b3340; }
+    .sgrow { background:#fff; border:1px solid #e3ecf6; border-radius:6px; padding:8px 10px; margin-top:8px; }
+    .sghd { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    .sgname { flex:1; min-width:140px; padding:5px 7px; border:1px solid #cdd3da; border-radius:5px;
+              font-size:12.5px; font-weight:600; font-family:inherit; }
+    .sgtag { font-size:10.5px; color:#66707c; background:#f1f4f8; border-radius:10px; padding:2px 8px; white-space:nowrap; }
+    .sgtag.new { color:#1e5b32; background:#eef8f0; }
+    .sgnums { font-size:11.5px; color:#66707c; margin-top:5px; line-height:1.5; }
+    .sugacts { display:flex; align-items:center; gap:12px; margin-top:10px; }
+    .sugacts a { font-size:11.5px; color:#8893a0; }
     /* Coverage: every sheet in the PDF placed or deliberately left out, resolved in real time. */
     .cov { margin-top:10px; border-radius:8px; padding:11px 13px 13px; border:1px solid; }
     .cov.ok   { background:#eef8f0; border-color:#cfe8d6; }
@@ -246,6 +258,7 @@
         <button type="button" class="addc" id="addComp">+ Add component</button>
         <button type="button" class="scanbtn" id="scanPdf" style="display:none">🔍 Preview the drawings in the PDF</button>
         <div id="allocPanel"></div>
+        <div id="suggest"></div>
         <div id="coverage"></div>
       </div>
     </div>
@@ -258,7 +271,7 @@
 
   <script>
     // ---- CONFIG ----------------------------------------------------------
-    const BUILD_TAG = "Material Compass · AI Take-off — v0.29 (2026-07-25)";
+    const BUILD_TAG = "Material Compass · AI Take-off — v0.30 (2026-07-26)";
     // Railway base URL (the material-compass-nesting-app backend that hosts /api/takeoff).
     const RAILWAY_URL = "https://material-compass-nesting-app-production.up.railway.app";
     // ~32 MB upstream request cap; warn the user before they waste a click.
@@ -419,6 +432,8 @@
     let creating = null;                              // {ci,di} row swapped into "type the new value"
     let excluded = { c: {}, d: {} };                  // record ids left OUT of this take-off (local only)
     let allocPlan = null;                             // pending "here's what this does to the project" confirmation
+    let suggestNames = {};                            // per-suggestion renames before they are taken
+    let suggestDismissed = false;                     // "no thanks" — proposal panel stays closed
     let sheets = [];                                  // every drawing read out of the PDFs (survives the allocation)
     let excludedSheets = [];                          // sheets deliberately left out: [{number,title,pages,reason}]
     let aliases = {};                                 // PDF number (normalized) → the drawing number to use instead
@@ -857,6 +872,7 @@
           pages: Array.isArray(s.pages) ? s.pages : [],
           pageList: Array.isArray(s.page_list) ? s.page_list.map(Number) : null,
           confidence: (s.confidence == null ? null : Number(s.confidence)),
+          suggestion: String(s.suggested_component || "").trim(),   // AI's proposed component for this sheet
           compIdx: guessComp(String(s.number || "")),
         })).filter((s) => s.number));
         // Coverage tracks the same objects, so edits and drops in the grid follow through.
@@ -1309,7 +1325,117 @@
           escHtml(x.name) + "</option>").join("") + "</select>";
     }
 
+    // ---- SUGGESTED BREAKDOWN ------------------------------------------------
+    // The whole proposal, up front: the components the AI thinks this package describes, each with
+    // the drawings that belong to it. Purely a suggestion — take all of it, take one group, rename
+    // a group before taking it, or ignore the lot and build the scope by hand. Nothing is written
+    // to the project until a button is pressed.
+    function suggestionGroups() {
+      const named = {};
+      project.components.forEach((c) => { named[_norm(c.name)] = c; });
+      const inScope = {};
+      scopeDrawIndex().forEach((x) => { inScope[_norm(x.number)] = 1; });
+      const exMap = {};
+      excludedSheets.forEach((x) => { exMap[_norm(x.number)] = 1; });
+
+      const byName = {}, order = [];
+      sheets.forEach((s) => {
+        const name = String(s.suggestion || "").trim() || suggestComponent(s.title);
+        if (!name || !s.number) return;
+        if (exMap[_norm(s.number)]) return;                   // already left out on purpose
+        const k = _norm(name);
+        if (!byName[k]) { byName[k] = { name: name, sheets: [], exists: named[k] || null }; order.push(k); }
+        byName[k].sheets.push(s);
+      });
+      // Only worth proposing where something is still missing from the scope.
+      return order.map((k) => byName[k]).map((g) => {
+        g.missing = g.sheets.filter((s) => !inScope[_norm(s.number)]);
+        return g;
+      }).filter((g) => g.missing.length);
+    }
+
+    function renderSuggestions() {
+      const host = document.getElementById("suggest");
+      if (!host) return;
+      if (!sheets.length || suggestDismissed) { host.innerHTML = ""; return; }
+      const groups = suggestionGroups();
+      if (!groups.length) { host.innerHTML = ""; return; }
+      const rows = groups.map((g, i) => {
+        const nums = g.missing.map((s) => escHtml(s.number)).join(", ");
+        return '<div class="sgrow">' +
+          '<div class="sghd">' +
+            '<input type="text" class="sgname" data-i="' + i + '" value="' + escAttr(g.name) + '" ' +
+              'title="Rename before you take it — this is the component name that gets created" />' +
+            (g.exists ? '<span class="sgtag">already on the project</span>' : '<span class="sgtag new">new component</span>') +
+            '<button type="button" class="covbtn" data-k="sgtake" data-i="' + i + '">' +
+              (g.exists ? "Add these drawings" : "Create with these drawings") + "</button>" +
+          "</div>" +
+          '<div class="sgnums">' + g.missing.length + " drawing" + (g.missing.length === 1 ? "" : "s") + ": " + nums + "</div>" +
+        "</div>";
+      }).join("");
+      const total = groups.reduce((n, g) => n + g.missing.length, 0);
+      host.innerHTML = '<div class="sug"><div class="sugttl">💡 Suggested breakdown ' +
+        '<span class="apg">— read off the title blocks; use it, edit it, or ignore it</span></div>' +
+        '<div class="covwhy">' + groups.length + " component" + (groups.length === 1 ? "" : "s") + " covering " +
+          total + " drawing" + (total === 1 ? "" : "s") + " not yet in your scope. Nothing is written to the " +
+          "project until you take it.</div>" + rows +
+        '<div class="sugacts"><button type="button" class="covbtn" data-k="sgall">✓ Use all suggestions</button>' +
+        '<a href="#" data-k="sgno">no thanks — I\'ll do it myself</a></div></div>';
+    }
+
+    document.getElementById("suggest").addEventListener("input", (e) => {
+      const t = e.target;
+      if (!t.classList || !t.classList.contains("sgname")) return;
+      suggestNames[Number(t.getAttribute("data-i"))] = t.value;     // rename before taking
+    });
+    document.getElementById("suggest").addEventListener("click", async (e) => {
+      const el = e.target.closest("[data-k]"); if (!el) return;
+      const k = el.getAttribute("data-k");
+      if (k === "sgno") { e.preventDefault(); suggestDismissed = true; renderSuggestions(); return; }
+      if (k === "sgtake") { await takeSuggestion(Number(el.getAttribute("data-i"))); return; }
+      if (k === "sgall") {
+        const n = suggestionGroups().length;
+        for (let i = 0; i < n; i++) await takeSuggestion(0, true);   // list shrinks as each is taken
+        setScopeStatus("Took the suggested breakdown. Review it below — it's all editable.");
+      }
+    });
+
+    // Create (or reuse) the component, then file its drawings under it — on the project, so the
+    // take-off and the project agree. Same endpoints as every other add on this screen.
+    async function takeSuggestion(i, quiet) {
+      if (!params.project_id) { setScopeStatus("Open the take-off from the project page to add records."); return; }
+      const groups = suggestionGroups();
+      const g = groups[i];
+      if (!g) return;
+      const name = String(suggestNames[i] || g.name).trim();
+      if (!name) return;
+      setScopeStatus('<span class="spin"></span>Adding “' + escHtml(name) + "” and its drawings to the project…");
+      try {
+        let cid = g.exists ? String(g.exists.id) : null;
+        if (!cid) {
+          const out = await scopeApi("add", { project_id: params.project_id, kind: "component", value: name });
+          cid = String(out.id);
+        }
+        for (const s of g.missing) {
+          const rec = findDrawingByNumber(s.number);
+          if (rec && !rec.owner) {                      // on the project but unfiled — file it here
+            await scopeApi("update", { kind: "drawing", id: rec.id, value: s.number, component_id: cid });
+          } else if (!rec) {
+            await scopeApi("add", { project_id: params.project_id, kind: "drawing", value: s.number, component_id: cid });
+          }
+          descMap[s.number] = s.title || "";
+        }
+        suggestNames = {};
+        await loadProject(); scopeFromProject(); saveScope(); renderScope();
+        if (!quiet) setScopeStatus("Added “" + escHtml(name) + "” with " + g.missing.length + " drawing" +
+          (g.missing.length === 1 ? "" : "s") + " to the project.");
+      } catch (err) {
+        setScopeStatus("Could not take that suggestion: " + escHtml(err.message || err));
+      }
+    }
+
     function renderCoverage() {
+      renderSuggestions();
       const host = document.getElementById("coverage");
       if (!host) return;
       if (!sheets.length) { host.innerHTML = ""; return; }
